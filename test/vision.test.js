@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { parseArgs, isImagePath, resolveLocalImage, loadDotEnv, checkRemoteSize } = require("../vision.js");
+const { parseArgs, exceedsImageLimit, isImagePath, resolveLocalImage, loadDotEnv, checkRemoteSize } = require("../vision.js");
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "vision-test-"));
@@ -78,6 +78,53 @@ test("parseArgs: --url 缺链接报错", () => {
 
 test("parseArgs: --prompt 缺文字报错", () => {
   assert.throws(() => parseArgs(["--prompt"]), /--prompt 后面需要跟问题文字/);
+});
+
+test("parseArgs: --json 开关", () => {
+  const r = parseArgs(["a.png", "--json"]);
+  assert.strictEqual(r.json, true);
+  assert.deepStrictEqual(r.images, ["a.png"]);
+});
+
+test("parseArgs: --json 与 URL 混用", () => {
+  const r = parseArgs(["--json", "https://a.com/1.png", "--url", "https://b.com/2.png"]);
+  assert.strictEqual(r.json, true);
+  assert.deepStrictEqual(r.urls, ["https://a.com/1.png", "https://b.com/2.png"]);
+});
+
+test("parseArgs: 默认非 json", () => {
+  assert.strictEqual(parseArgs(["a.png"]).json, false);
+});
+
+test("parseArgs: --url 后跟 --prompt 报错", () => {
+  assert.throws(() => parseArgs(["--url", "--prompt", "x"]), /--url 后面需要跟图片链接/);
+});
+
+test("parseArgs: -p 与 --prompt 混合，后者覆盖前者", () => {
+  const r = parseArgs(["a.png", "-p", "显式", "--prompt", "覆盖"]);
+  assert.strictEqual(r.prompt, "覆盖");
+});
+
+test("parseArgs: 裸 URL 与 --url 混用", () => {
+  const r = parseArgs(["https://a.com/1.png", "--url", "https://b.com/2.png", "c.png", "问"]);
+  assert.deepStrictEqual(r.urls, ["https://a.com/1.png", "https://b.com/2.png"]);
+  assert.deepStrictEqual(r.images, ["c.png"]);
+  assert.strictEqual(r.prompt, "问");
+});
+
+// ---------- exceedsImageLimit ----------
+
+test("exceedsImageLimit: 超过上限", () => {
+  assert.strictEqual(exceedsImageLimit({ images: ["a.png", "b.png"], urls: [] }, 1), true);
+});
+
+test("exceedsImageLimit: 未超过上限", () => {
+  assert.strictEqual(exceedsImageLimit({ images: ["a.png"], urls: ["https://x.com/a.png"] }, 2), false);
+});
+
+test("exceedsImageLimit: 默认上限 MAX_IMAGES", () => {
+  const many = { images: Array.from({ length: 21 }, (_, i) => `${i}.png`), urls: [] };
+  assert.strictEqual(exceedsImageLimit(many), true);
 });
 
 // ---------- isImagePath ----------
@@ -415,6 +462,59 @@ test("runWithConcurrency: 单图直接输出文字，无分隔头", async () => 
       assert.strictEqual(failed, false);
       assert.strictEqual(log.mock.calls.length, 1);
       assert.strictEqual(String(log.mock.calls[0].arguments[0]), "结果文本");
+    } finally {
+      mock.restoreAll();
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test("runWithConcurrency: --json 输出数组，单图也数组", async () => {
+  const { server, port } = await startServer((req, res) => {
+    req.resume();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ choices: [{ message: { content: "描述A" } }] }));
+  });
+  try {
+    const log = mock.method(console, "log");
+    try {
+      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+      const tasks = [{ label: "a.png", resolve: () => Promise.resolve("http://x/a.png") }];
+      const failed = await mod.runWithConcurrency(tasks, 3, "q", { json: true });
+      assert.strictEqual(failed, false);
+      assert.strictEqual(log.mock.calls.length, 1);
+      const out = JSON.parse(String(log.mock.calls[0].arguments[0]));
+      assert.deepStrictEqual(out, [{ ok: true, label: "a.png", text: "描述A" }]);
+    } finally {
+      mock.restoreAll();
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test("runWithConcurrency: --json 失败项带 error 字段", async () => {
+  const { server, port } = await startServer((req, res) => {
+    req.resume();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ choices: [{ message: { content: "描述B" } }] }));
+  });
+  try {
+    const log = mock.method(console, "log");
+    try {
+      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+      const tasks = [
+        { label: "missing.png", resolve: () => resolveLocalImage("/nonexistent/xyz.png") },
+        { label: "b.png", resolve: () => Promise.resolve("data:image/png;base64,AAAA") },
+      ];
+      const failed = await mod.runWithConcurrency(tasks, 2, "q", { json: true });
+      assert.strictEqual(failed, true);
+      const out = JSON.parse(String(log.mock.calls[0].arguments[0]));
+      assert.strictEqual(out.length, 2);
+      assert.strictEqual(out[0].ok, false);
+      assert.match(out[0].error, /文件不存在/);
+      assert.deepStrictEqual(out[1], { ok: true, label: "b.png", text: "描述B" });
     } finally {
       mock.restoreAll();
     }

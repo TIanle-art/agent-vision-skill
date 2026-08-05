@@ -73,6 +73,7 @@ const HELP = `用法:
   [问题]       要问的问题，多个词自动拼接（默认: ${DEFAULT_PROMPT}）
   --url <链接> 网络图片链接，可重复使用
   -p, --prompt <文字>  指定问题（其后未被识别的词仍会追加到问题后）
+  --json       以 JSON 数组输出结果（每张图一个对象: {ok,label,text|error}，供程序解析）
   -h, --help   显示本帮助
 
 环境变量（可选，一般不填）:
@@ -104,10 +105,13 @@ function parseArgs(argv) {
   const images = [];
   const urls = [];
   let prompt = "";
+  let json = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") return { help: true };
-    if (a === "--url") {
+    if (a === "--json") {
+      json = true;
+    } else if (a === "--url") {
       const v = argv[++i];
       if (!v || v.startsWith("-")) throw new Error("--url 后面需要跟图片链接");
       urls.push(v);
@@ -126,7 +130,11 @@ function parseArgs(argv) {
     }
   }
   if (!prompt) prompt = DEFAULT_PROMPT;
-  return { images, urls, prompt };
+  return { images, urls, prompt, json };
+}
+
+function exceedsImageLimit(parsed, max = MAX_IMAGES) {
+  return parsed.images.length + parsed.urls.length > max;
 }
 
 function resolveLocalImage(source) {
@@ -273,7 +281,8 @@ async function describe(imageUrl, prompt) {
 }
 
 // 多图并发识别：并发执行、按输入顺序输出；单张失败不中断其他，返回是否有失败
-async function runWithConcurrency(tasks, limit, prompt) {
+// opts.json 为 true 时，stdout 只输出 JSON 数组（每张图一个对象），供程序解析
+async function runWithConcurrency(tasks, limit, prompt, opts = {}) {
   const results = new Array(tasks.length);
   let next = 0;
   let failed = false;
@@ -291,6 +300,12 @@ async function runWithConcurrency(tasks, limit, prompt) {
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  if (opts.json) {
+    console.log(JSON.stringify(results.map(r => r.ok
+      ? { ok: true, label: r.label, text: r.text }
+      : { ok: false, label: r.label, error: r.error })));
+    return failed;
+  }
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     if (r.ok) {
@@ -335,7 +350,7 @@ function main() {
     console.error("      node vision.js --help");
     process.exit(1);
   }
-  if (parsed.images.length + parsed.urls.length > MAX_IMAGES) {
+  if (exceedsImageLimit(parsed)) {
     console.error(`图片数量 ${parsed.images.length + parsed.urls.length} 张超过上限 ${MAX_IMAGES} 张，请分批识别。`);
     process.exit(1);
   }
@@ -349,10 +364,10 @@ function main() {
   ];
 
   (async () => {
-    const failed = await runWithConcurrency(tasks, CONCURRENCY, parsed.prompt);
+    const failed = await runWithConcurrency(tasks, CONCURRENCY, parsed.prompt, { json: parsed.json });
     process.exit(failed ? 1 : 0);
   })();
 }
 
 if (require.main === module) main();
-module.exports = { parseArgs, isImagePath, resolveLocalImage, loadDotEnv, checkRemoteSize, request, runWithConcurrency };
+module.exports = { parseArgs, exceedsImageLimit, isImagePath, resolveLocalImage, loadDotEnv, checkRemoteSize, request, runWithConcurrency };
