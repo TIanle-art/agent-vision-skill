@@ -10,7 +10,7 @@ DeepSeek V4、GLM 等纯文本大模型无法直接理解图片内容，收到�
 
 ---
 
-## 如果你是 AI（Claude Code / Cline / 其他助手），请读这里
+## 如果你是 AI（Claude Code / Codex / opencode / 其他助手），请读这里
 
 用户把这个链接发给你，是想让你帮他配置识图。先确认信息，再按场景执行。
 
