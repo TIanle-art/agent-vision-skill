@@ -16,6 +16,27 @@ const path = require("path");
 const https = require("https");
 const http = require("http");
 
+// 读取同目录 .env（Key 放这里更安全，不会误传 GitHub）
+function loadDotEnv(filePath = path.join(__dirname, ".env")) {
+  if (!fs.existsSync(filePath)) return;
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (value.length >= 2 &&
+        ((value[0] === '"' && value[value.length - 1] === '"') ||
+         (value[0] === "'" && value[value.length - 1] === "'"))) {
+      value = value.slice(1, -1);
+    }
+    if (key && !(key in process.env)) process.env[key] = value;
+  }
+}
+loadDotEnv();
+
 // ==================== 模型配置 ====================
 // 当前默认：qwen3-vl-flash（便宜，够用）
 // 想增强识图质量？把下面改成 qwen3-vl-plus（更强，稍贵）
@@ -27,6 +48,7 @@ const BASE_URL = process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.c
 const MAX_TOKENS  = Number(process.env.VISION_MAX_TOKENS) || 1024;
 const MAX_IMAGE_MB = Number(process.env.VISION_MAX_IMAGE_MB) || 7;
 const MAX_IMAGES = 20;
+const CONCURRENCY = Number(process.env.VISION_CONCURRENCY) || 3;
 const TIMEOUT_MS = 60000;
 
 const IMAGE_EXTS = ["jpg", "jpeg", "png", "gif", "webp", "bmp"];
@@ -52,6 +74,7 @@ const HELP = `用法:
   DASHSCOPE_BASE_URL     服务地址（默认阿里云百炼）
   VISION_MAX_TOKENS      最大输出 token（默认 1024）
   VISION_MAX_IMAGE_MB    单图大小上限 MB（默认 7）
+  VISION_CONCURRENCY     多图并发数（默认 3）
 
 模型切换:
   默认 qwen3-vl-flash（便宜）; 想增强识图改为 qwen3-vl-plus
@@ -115,6 +138,39 @@ function resolveLocalImage(source) {
   return `data:image/${MIME_MAP[ext]};base64,${data.toString("base64")}`;
 }
 
+// 网络图片大小预检（最佳努力）：HEAD 取 Content-Length，超限报错；失败/无长度则放行，交给 API 兜底
+function checkRemoteSize(urlStr, maxBytes = MAX_IMAGE_MB * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let hops = 0;
+    const probe = (target) => {
+      if (hops++ > 5) return resolve();
+      let u;
+      try { u = new URL(target); } catch { return resolve(); }
+      const transport = u.protocol === "https:" ? https : http;
+      const req = transport.request(u, {
+        method: "HEAD",
+        headers: { "User-Agent": "vision.js" },
+      }, (res) => {
+        res.resume();
+        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+          return probe(new URL(res.headers.location, u).href);
+        }
+        const len = Number(res.headers["content-length"]);
+        if (Number.isFinite(len) && len > maxBytes) {
+          return reject(new Error(
+            `图片过大: ${(len / 1024 / 1024).toFixed(1)}MB，超过上限 ${MAX_IMAGE_MB}MB，请压缩后重试`
+          ));
+        }
+        resolve();
+      });
+      req.on("error", () => resolve());
+      req.setTimeout(10000, () => { req.destroy(); resolve(); });
+      req.end();
+    };
+    probe(urlStr);
+  });
+}
+
 function request(payload) {
   const url = new URL(BASE_URL.replace(/\/?$/, "/") + "chat/completions");
   const body = JSON.stringify(payload);
@@ -165,6 +221,42 @@ async function describe(imageUrl, prompt) {
   });
 }
 
+// 多图并发识别：并发执行、按输入顺序输出；单张失败不中断其他，返回是否有失败
+async function runWithConcurrency(tasks, limit, prompt) {
+  const results = new Array(tasks.length);
+  let next = 0;
+  let failed = false;
+  async function worker() {
+    while (next < tasks.length) {
+      const i = next++;
+      const { label, resolve } = tasks[i];
+      try {
+        const imageUrl = await resolve();
+        results[i] = { ok: true, label, text: await describe(imageUrl, prompt) };
+      } catch (e) {
+        failed = true;
+        results[i] = { ok: false, label, error: e.message };
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r.ok) {
+      if (tasks.length === 1) {
+        console.log(r.text);
+      } else {
+        console.log(`=== 图片 ${i + 1}: ${r.label} ===`);
+        console.log(r.text);
+        if (i < results.length - 1) console.log("");
+      }
+    } else {
+      console.error(`识图失败 (${r.label}): ${r.error}`);
+    }
+  }
+  return failed;
+}
+
 function main() {
   const argv = process.argv.slice(2);
   let parsed;
@@ -177,7 +269,7 @@ function main() {
   if (parsed.help) { console.log(HELP); return; }
 
   if (!API_KEY || API_KEY.startsWith("sk-xxx")) {
-    console.error("请先在 vision.js 顶部『模型配置』区填入你的 API Key。");
+    console.error("请先配置 API Key：在 vision.js 顶部『模型配置』区填入，或在同目录 .env 里写 DASHSCOPE_API_KEY=sk-xxx（推荐，参考 .env.example）。");
     console.error("获取 Key: https://bailian.console.aliyun.com/");
     process.exit(1);
   }
@@ -199,37 +291,17 @@ function main() {
 
   const tasks = [
     ...parsed.images.map(src => ({ label: src, resolve: () => resolveLocalImage(src) })),
-    ...parsed.urls.map(url => ({ label: url, resolve: () => url })),
+    ...parsed.urls.map(url => ({
+      label: url,
+      resolve: async () => { await checkRemoteSize(url); return url; },
+    })),
   ];
 
   (async () => {
-    let failed = false;
-    for (let i = 0; i < tasks.length; i++) {
-      const { label, resolve } = tasks[i];
-      let imageUrl;
-      try {
-        imageUrl = resolve();
-      } catch (e) {
-        failed = true;
-        console.error(`识图失败 (${label}): ${e.message}`);
-        continue;
-      }
-      try {
-        const result = await describe(imageUrl, parsed.prompt);
-        if (tasks.length === 1) {
-          console.log(result);
-        } else {
-          console.log(`=== 图片 ${i + 1}: ${label} ===`);
-          console.log(result);
-          if (i < tasks.length - 1) console.log("");
-        }
-      } catch (e) {
-        failed = true;
-        console.error(`识图失败 (${label}, model: ${MODEL}): ${e.message}`);
-      }
-    }
+    const failed = await runWithConcurrency(tasks, CONCURRENCY, parsed.prompt);
     process.exit(failed ? 1 : 0);
   })();
 }
 
-main();
+if (require.main === module) main();
+module.exports = { parseArgs, isImagePath, resolveLocalImage, loadDotEnv, checkRemoteSize };

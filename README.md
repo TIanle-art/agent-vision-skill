@@ -4,6 +4,8 @@
 
 适用于 Claude Code、Cline、Cyberboss 等任何能执行 node 脚本的 AI 编程助手/智能体，不绑定特定产品。
 
+> 本仓库基于 [asuojun/claude-vision-skill](https://github.com/asuojun/claude-vision-skill) 修改，感谢原作者。
+
 ---
 
 ## 如果你是 AI（Claude Code / Cline / 其他助手），请读这里
@@ -29,6 +31,7 @@
    - `API_KEY` 填成用户的 Key（替换 `sk-xxx`）
    - `MODEL` 填成用户选的模型名
    - 用户选了非百炼平台时，`BASE_URL` 同步填成用户给的服务地址
+   - **或者（推荐）**：复制 `.env.example` 为 `.env`，把 Key 和模型写在 `.env` 里，见下方「用 .env 存 Key」小节
 3. 把 `CLAUDE.md` 的内容合并到项目的说明文件（Claude Code 用 `CLAUDE.md`，Cline 用 `.clinerules`，其他助手按其约定；没有就新建）
 4. 验证配置：运行 `node vision.js --help`，能看到用法输出即脚本可用
 5. 告诉用户：配置完成，以后直接发图片就行，AI 会自动识图。**想切换模型随时说一声**——"换增强视觉模型"或"换 plus"就是更强的 `qwen3-vl-plus`，"换回 flash"回到默认。
@@ -62,14 +65,14 @@
 | 阿里云百炼 | `qwen3-vl-plus` | 更强，稍贵 |
 | 其他 | 任何 OpenAI 兼容格式 | 改 `BASE_URL` 和模型名即可 |
 
-> 注：百炼新用户赠送免费 token 额度，上述模型均适用。成本按 token 计费，`qwen3-vl-flash` 单次识图通常几分钱，免费额度足够日常使用很久（具体以百炼定价页为准）。千问官方新系列（`qwen3.7-flash` / `qwen3.7-plus`）能力更强，如旧系列下线可作为备选无缝切换。
+> 注：百炼新用户赠送免费 token 额度，上述模型均适用。成本按 token 计费，`qwen3-vl-flash` 单次识图通常几分钱，免费额度足够日常使用很久（具体以百炼定价页为准）。如旧系列下线，可无缝切换官方新系列 `qwen3.7-plus`（已实测支持识图）。
 
 ### 自动配置
 
 **方式一（推荐）**：先把仓库 clone 到本地，然后告诉 AI 助手本地路径：
 
 ```
-git clone https://github.com/asuojun/agent-vision-skill.git
+git clone https://github.com/TIanle-art/agent-vision-skill.git
 ```
 
 然后在 AI 助手里说：
@@ -78,7 +81,7 @@ git clone https://github.com/asuojun/agent-vision-skill.git
 
 **方式二**：直接发 GitHub 链接（DeepSeek 等第三方模型可能无法访问 GitHub）：
 
-> 按 https://github.com/asuojun/agent-vision-skill 的 README 帮我配置识图
+> 按 https://github.com/TIanle-art/agent-vision-skill 的 README 帮我配置识图
 
 AI 会问你 API Key、要哪个模型，然后自动配好。
 
@@ -87,6 +90,20 @@ AI 会问你 API Key、要哪个模型，然后自动配好。
 1. 把 `vision.js` 拷到项目里
 2. 打开 `vision.js` 顶部「模型配置」区，填 API Key（替换 `sk-xxx`），确认模型名（默认 `qwen3-vl-flash`，想增强就填 `qwen3-vl-plus`；用非千问服务还需改 API 地址）
 3. 把 `CLAUDE.md` 放到项目根目录
+
+### 用 .env 存 Key（推荐）
+
+不想改代码？把配置写进同目录 `.env` 文件，`vision.js` 启动时自动读取：
+
+1. 复制 `.env.example` 为 `.env`（或手动新建）
+2. 在 `.env` 里填：
+
+```
+DASHSCOPE_API_KEY=sk-xxx
+VISION_MODEL=qwen3-vl-flash
+```
+
+`.env` 已被 `.gitignore` 忽略，不会误传 GitHub。配置优先级：**终端环境变量 > `.env` 文件 > `vision.js` 顶部代码默认值**。
 
 ### 如何换更强的模型
 
@@ -106,5 +123,7 @@ AI 会问你 API Key、要哪个模型，然后自动配好。
 | `vision.js` | 核心脚本，OpenAI 兼容格式 |
 | `CLAUDE.md` | 识图规则说明，让 AI 知道何时调用 vision.js（其他助手可转为 `.clinerules` 等格式） |
 | `cyberboss-setup.md` | cyberboss 自动配置指令 |
+| `.env.example` | 环境变量示例，复制为 `.env` 填 Key 即可 |
+| `test/` | 单元测试，`npm test` 运行 |
 
-> ⚠️ 安全提醒：`vision.js` 里填了真实的 API Key 后，**切勿把该文件提交到 GitHub**。更稳妥的做法：填完 Key 后执行 `git update-index --skip-worktree vision.js`，此后 git 提交会自动忽略 vision.js 的改动，从机制上杜绝误传 Key。
+> ⚠️ 安全提醒：`vision.js` 里填了真实的 API Key 后，**切勿把该文件提交到 GitHub**。更稳妥的做法：用 `.env` 文件存 Key（已被 gitignore），或填完 Key 后执行 `git update-index --skip-worktree vision.js`，此后 git 提交会自动忽略 vision.js 的改动，从机制上杜绝误传 Key。

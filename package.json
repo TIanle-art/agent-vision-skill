@@ -1,0 +1,10 @@
+{
+  "name": "agent-vision-skill",
+  "version": "1.0.0",
+  "description": "让没有识图能力的模型获得识图能力——图片发给有 vision 的模型，用文字描述回来",
+  "main": "vision.js",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT"
+}
