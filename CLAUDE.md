@@ -41,3 +41,5 @@ node vision.js --url "https://example.com/a.png" "用中文描述这张图片"
 ## 配置好之后
 
 用户直接发图片，自动识图，无需手动打命令。
+
+> 本项目另有标准 Agent Skill 形态：`skill/SKILL.md` + `skill/vision.js`（Claude Code / opencode / Cline / Cursor 等支持 SKILL.md 的 agent 可直接安装，无需本文件）。本文件是"拷贝进项目"形态，两者规则内容保持一致。

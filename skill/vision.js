@@ -10,7 +10,7 @@
  *   node vision.js --help
  *
  * 配置: 见下方"模型配置"区，直接改代码填 Key 即可（无需其他文件）。
- * 注意: 本文件与 skill/vision.js 保持同步，改动请同时更新两份。
+ * 注意: 本文件与仓库根目录 vision.js 保持同步，改动请同时更新两份。
  */
 
 const fs = require("fs");

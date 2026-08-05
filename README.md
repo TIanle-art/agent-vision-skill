@@ -83,6 +83,25 @@ git clone https://github.com/TIanle-art/agent-vision-skill.git
 
 AI 会问你 API Key、要哪个模型，然后自动配好。
 
+### 作为 Skill 安装（各 agent 通用）
+
+`skill/` 目录是标准 Agent Skill（Anthropic agent skills 规范）：`SKILL.md` + `vision.js`，Claude Code、opencode、Cline、Cursor 等支持 SKILL.md 的 agent 直接安装即可，装好后 AI 收到图片会自动识图，无需再拷 CLAUDE.md：
+
+```
+git clone https://github.com/TIanle-art/agent-vision-skill.git
+```
+
+| agent | 安装命令 |
+|-------|---------|
+| Claude Code | `mkdir -p ~/.claude/skills/vision && cp -r agent-vision-skill/skill/* ~/.claude/skills/vision/` |
+| opencode | `mkdir -p ~/.config/opencode/skills/vision && cp -r agent-vision-skill/skill/* ~/.config/opencode/skills/vision/` |
+| Cline | 兼容 Claude Code 路径（`~/.claude/skills/vision/`），或按你的 Cline 版本约定放置 |
+| 其他支持 SKILL.md 的 agent | 按其 skills 目录约定放置 `skill/` 内容 |
+
+装完把 API Key 写进 skill 目录的 `.env`（复制 `.env.example`），之后直接发图片即可。**切换模型随时说一声**——"换增强视觉模型/换 plus"→ `qwen3-vl-plus`，"换回 flash"→ `qwen3-vl-flash`。
+
+不支持 SKILL.md 的 agent（如 Codex、Windsurf）：把 `rules/AGENTS.md` 的内容合并到项目的规则文件，并把 `<VISION_DIR>` 替换为 `vision.js` 实际路径。
+
 ### 手动配置
 
 1. 把 `vision.js` 拷到项目里
@@ -118,8 +137,10 @@ VISION_MODEL=qwen3-vl-flash
 
 | 文件 | 用途 |
 |------|------|
-| `vision.js` | 核心脚本，OpenAI 兼容格式 |
+| `vision.js` | 核心脚本，OpenAI 兼容格式（与 `skill/vision.js` 同步） |
 | `CLAUDE.md` | 识图规则说明，让 AI 知道何时调用 vision.js（其他助手可转为 `.clinerules` 等格式） |
+| `skill/SKILL.md` + `skill/vision.js` | 标准 Agent Skill 形态，各支持 SKILL.md 的 agent 直接安装 |
+| `rules/AGENTS.md` | 不支持 SKILL.md 的 agent（Codex/Windsurf）的桥接规则 |
 | `.env.example` | 环境变量示例，复制为 `.env` 填 Key 即可 |
 | `test/` | 单元测试，`npm test` 运行 |
 
