@@ -9,7 +9,8 @@
  *   node vision.js <图片链接> [问题]       # 网络图片（URL 自动识别）
  *   node vision.js --help
  *
- * 配置: 见下方"模型配置"区，直接改代码填 Key 即可（无需其他文件）。
+ * 配置: 推荐复制同目录 .env.example 为 .env 并填入 Key（.env 已被 gitignore，不会误提交）；
+ *       也可改下方"模型配置"区直接填（改代码有误提交 Key 的风险，不推荐）。
  * 注意: 本文件与仓库根目录 vision.js 保持同步，改动请同时更新两份。
  */
 
@@ -40,6 +41,8 @@ function loadDotEnv(filePath = path.join(__dirname, ".env")) {
 loadDotEnv();
 
 // ==================== 模型配置 ====================
+// 推荐优先用 .env（复制 .env.example 为 .env，.env 已被 gitignore 不会误提交）；
+// 没有 .env 时，下面的代码默认值才生效。
 // 当前默认：qwen3-vl-flash（便宜，够用）
 // 想增强识图质量？把下面改成 qwen3-vl-plus（更强，稍贵）
 // 或直接对 AI 说："换增强视觉模型" / "换 plus"；说"换回 flash"恢复默认。
@@ -47,7 +50,8 @@ loadDotEnv();
 // --------------------------------------------------
 const API_KEY = process.env.DASHSCOPE_API_KEY || "sk-xxx";   // ← 填你的 API Key
 const MODEL   = process.env.VISION_MODEL || "qwen3-vl-flash";
-const BASE_URL = process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
+const BASE_URL = (process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1")
+  .replace(/\/chat\/completions\/?$/, "");   // 兼容用户填完整 endpoint 的情况
 const MAX_TOKENS  = Number(process.env.VISION_MAX_TOKENS) || 1024;
 const MAX_IMAGE_MB = Number(process.env.VISION_MAX_IMAGE_MB) || 7;
 const MAX_IMAGES = Number(process.env.VISION_MAX_IMAGES) || 20;
@@ -55,9 +59,12 @@ const CONCURRENCY = Number(process.env.VISION_CONCURRENCY) || 3;
 const TIMEOUT_MS = 60000;
 const MAX_RETRIES = Number(process.env.VISION_MAX_RETRIES) || 2;
 const RETRY_BASE_DELAY_MS = 600;
+// 服务端建议：最长边不超过 8K(7680px)；4K(3840px) 以上仅支持 jpg/jpeg/png
+const MAX_IMAGE_PX = Number(process.env.VISION_MAX_IMAGE_PX) || 7680;
+const PX_4K = 3840;
 
-const IMAGE_EXTS = ["jpg", "jpeg", "png", "gif", "webp", "bmp"];
-const MIME_MAP = { jpg: "jpeg", jpeg: "jpeg", png: "png", gif: "gif", webp: "webp", bmp: "bmp" };
+const IMAGE_EXTS = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "heic"];
+const MIME_MAP = { jpg: "jpeg", jpeg: "jpeg", png: "png", gif: "gif", webp: "webp", bmp: "bmp", tif: "tiff", tiff: "tiff", heic: "heic" };
 const DEFAULT_PROMPT = "请详细描述这张图片的内容。";
 
 const HELP = `用法:
@@ -68,23 +75,28 @@ const HELP = `用法:
   node vision.js --help
 
 参数:
-  <路径>       本地图片（jpg/jpeg/png/gif/webp/bmp），可多个
+  <路径>       本地图片（jpg/jpeg/png/bmp/webp/tiff/heic；gif 动图不支持），可多个
   <链接>       网络图片 URL（含 :// 自动识别，可多个；也可用 --url 显式指定）
   [问题]       要问的问题，多个词自动拼接（默认: ${DEFAULT_PROMPT}）
   --url <链接> 网络图片链接，可重复使用
-  -p, --prompt <文字>  指定问题（其后未被识别的词仍会追加到问题后）
+  -p, --prompt <文字>  指定问题（可多次，与普通词一起按出现顺序拼接）
   --json       以 JSON 数组输出结果（每张图一个对象: {ok,label,text|error}，供程序解析）
   -h, --help   显示本帮助
 
 环境变量（可选，一般不填）:
   DASHSCOPE_API_KEY      API Key（默认读上方配置区）
   VISION_MODEL           模型名（默认 qwen3-vl-flash）
-  DASHSCOPE_BASE_URL     服务地址（默认阿里云百炼）
+  DASHSCOPE_BASE_URL     服务地址（默认阿里云百炼；填了 /chat/completions 后缀会自动去掉）
   VISION_MAX_TOKENS      最大输出 token（默认 1024）
   VISION_MAX_IMAGE_MB    单图大小上限 MB（默认 7）
+  VISION_MAX_IMAGE_PX    单图最长边上限 px（默认 7680，服务端建议 8K 以内）
   VISION_CONCURRENCY     多图并发数（默认 3）
   VISION_MAX_IMAGES      单次最多图片数（默认 20）
   VISION_MAX_RETRIES     失败自动重试次数（默认 2；429/5xx/超时会重试）
+
+限制说明（以服务端为准，本地提前拦截并提示压缩）:
+  gif 动图不支持；分辨率 4K(3840px) 以上仅支持 jpg/jpeg/png；
+  最长边超过 8K(7680px) 会建议压缩（如 sips -Z 7680 <图片> --out <新文件>）
 
 模型切换:
   默认 qwen3-vl-flash（便宜）; 想增强识图改为 qwen3-vl-plus
@@ -114,11 +126,12 @@ function parseArgs(argv) {
     } else if (a === "--url") {
       const v = argv[++i];
       if (!v || v.startsWith("-")) throw new Error("--url 后面需要跟图片链接");
+      if (!v.includes("://")) throw new Error(`--url 需要完整的网络图片链接（含 http:// 或 https://）: ${v}`);
       urls.push(v);
     } else if (a === "--prompt" || a === "-p") {
       const v = argv[++i];
       if (!v) throw new Error("--prompt 后面需要跟问题文字");
-      prompt = v;
+      prompt = prompt ? `${prompt} ${v}` : v;
     } else if (a.startsWith("--")) {
       throw new Error(`未知参数: ${a}（用 --help 查看用法）`);
     } else if (a.includes("://")) {
@@ -137,12 +150,48 @@ function exceedsImageLimit(parsed, max = MAX_IMAGES) {
   return parsed.images.length + parsed.urls.length > max;
 }
 
+// 本地解析图片尺寸（PNG/JPEG/GIF/BMP），解析失败返回 null（放行，交给服务端兜底）
+function readImageDimensions(filePath) {
+  try {
+    const b = Buffer.alloc(32);
+    const fd = fs.openSync(filePath, "r");
+    fs.readSync(fd, b, 0, 32, 0);
+    fs.closeSync(fd);
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) { // PNG
+      return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+    }
+    if (b[0] === 0xff && b[1] === 0xd8) { // JPEG: 扫描 SOF 段拿尺寸
+      let offset = 2;
+      while (offset + 9 <= b.length) {
+        if (b[offset] !== 0xff) { offset++; continue; }
+        const marker = b[offset + 1];
+        const len = b.readUInt16BE(offset + 2);
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { height: b.readUInt16BE(offset + 5), width: b.readUInt16BE(offset + 7) };
+        }
+        offset += 2 + len;
+      }
+      return null;
+    }
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) { // GIF
+      return { width: b.readUInt16LE(6), height: b.readUInt16LE(8) };
+    }
+    if (b[0] === 0x42 && b[1] === 0x4d) { // BMP
+      return { width: b.readInt32LE(18), height: Math.abs(b.readInt32LE(22)) };
+    }
+  } catch {}
+  return null;
+}
+
 function resolveLocalImage(source) {
   const resolved = path.resolve(source);
   if (!fs.existsSync(resolved)) throw new Error(`文件不存在: ${resolved}`);
   const ext = path.extname(resolved).toLowerCase().replace(".", "");
   if (!IMAGE_EXTS.includes(ext)) {
-    throw new Error(`不支持的图片格式: ${ext}（支持 jpg/jpeg/png/gif/webp/bmp）`);
+    throw new Error(`不支持的图片格式: ${ext}（支持 jpg/jpeg/png/bmp/webp/tiff/heic）`);
+  }
+  if (ext === "gif") {
+    throw new Error("不支持 GIF 动图（服务端不支持该格式），请先转换为 jpg/png 再试，例如: sips -s format jpeg " + resolved + " --out " + resolved + ".jpg");
   }
   const size = fs.statSync(resolved).size;
   const limit = MAX_IMAGE_MB * 1024 * 1024;
@@ -153,6 +202,25 @@ function resolveLocalImage(source) {
       `（base64 编码会使体积膨胀约 33%，API 上限约 10MB）\n` +
       `请先压缩再试，例如: sips -Z 2000 ${resolved} --out ${out}`
     );
+  }
+  const dim = readImageDimensions(resolved);
+  if (dim) {
+    const longEdge = Math.max(dim.width, dim.height);
+    if (longEdge > MAX_IMAGE_PX) {
+      const out = resolved.replace(/(\.[^.]+)$/, "_small$1");
+      throw new Error(
+        `图片分辨率过大: ${dim.width}x${dim.height}，超过建议上限（最长边 ${MAX_IMAGE_PX}px）\n` +
+        `（超大分辨率不提升识别精度，反而易致调用超时）\n` +
+        `请先压缩再试，例如: sips -Z ${MAX_IMAGE_PX} ${resolved} --out ${out}`
+      );
+    }
+    if (longEdge > PX_4K && !["jpg", "jpeg", "png"].includes(ext)) {
+      const out = resolved.replace(/(\.[^.]+)$/, "_small$1");
+      throw new Error(
+        `图片分辨率 ${dim.width}x${dim.height}（4K 以上）服务端仅支持 jpg/jpeg/png，当前为 ${ext}\n` +
+        `请先转换格式，例如: sips -s format jpeg ${resolved} --out ${out}`
+      );
+    }
   }
   const data = fs.readFileSync(resolved);
   return `data:image/${MIME_MAP[ext]};base64,${data.toString("base64")}`;
@@ -220,7 +288,7 @@ function requestOnce(url, body) {
           if (res.statusCode === 401 || res.statusCode === 403) {
             hint = "：请检查 API Key 是否正确/是否有效";
           } else if (res.statusCode === 404) {
-            hint = "：请检查模型名是否正确/是否已开通";
+            hint = "：请检查模型名是否正确/已开通，或 BASE_URL 服务地址是否正确（不要带 /chat/completions 后缀）";
           } else if (res.statusCode === 429) {
             hint = "：触发限流或额度不足，稍后自动重试";
           }
@@ -370,4 +438,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { parseArgs, exceedsImageLimit, isImagePath, resolveLocalImage, loadDotEnv, checkRemoteSize, request, runWithConcurrency };
+module.exports = { parseArgs, exceedsImageLimit, isImagePath, readImageDimensions, resolveLocalImage, loadDotEnv, checkRemoteSize, request, runWithConcurrency };

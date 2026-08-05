@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { parseArgs, exceedsImageLimit, isImagePath, resolveLocalImage, loadDotEnv, checkRemoteSize } = require("../vision.js");
+const { parseArgs, exceedsImageLimit, isImagePath, readImageDimensions, resolveLocalImage, loadDotEnv, checkRemoteSize } = require("../vision.js");
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "vision-test-"));
@@ -100,9 +100,13 @@ test("parseArgs: --url 后跟 --prompt 报错", () => {
   assert.throws(() => parseArgs(["--url", "--prompt", "x"]), /--url 后面需要跟图片链接/);
 });
 
-test("parseArgs: -p 与 --prompt 混合，后者覆盖前者", () => {
+test("parseArgs: -p 与 --prompt 混合，按顺序拼接", () => {
   const r = parseArgs(["a.png", "-p", "显式", "--prompt", "覆盖"]);
-  assert.strictEqual(r.prompt, "覆盖");
+  assert.strictEqual(r.prompt, "显式 覆盖");
+});
+
+test("parseArgs: --url 后跟非链接报错", () => {
+  assert.throws(() => parseArgs(["--url", "foo.png"]), /需要完整/);
 });
 
 test("parseArgs: 裸 URL 与 --url 混用", () => {
@@ -170,6 +174,108 @@ test("resolveLocalImage: 超限报错", () => {
   const file = path.join(dir, "big.png");
   fs.writeFileSync(file, Buffer.alloc(2048));
   assert.throws(() => vision.resolveLocalImage(file), /图片过大/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveLocalImage: gif 明确报错", () => {
+  const dir = tempDir();
+  const file = path.join(dir, "a.gif");
+  fs.writeFileSync(file, Buffer.from("GIF89a"));
+  assert.throws(() => resolveLocalImage(file), /不支持 GIF/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveLocalImage: 分辨率超过 8K 拦截", () => {
+  const dir = tempDir();
+  const file = path.join(dir, "huge.png");
+  const b = Buffer.alloc(32);
+  b.writeUInt8(0x89, 0); b.write("PNG\r\n\x1a\n", 1);
+  b.writeUInt32BE(9000, 16);
+  b.writeUInt32BE(2000, 20);
+  fs.writeFileSync(file, b);
+  assert.throws(() => resolveLocalImage(file), /分辨率过大/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveLocalImage: 4K-8K 非 jpg/png 拦截", () => {
+  const dir = tempDir();
+  const file = path.join(dir, "wide.bmp");
+  const b = Buffer.alloc(32);
+  b.write("BM", 0);
+  b.writeInt32LE(5000, 18);
+  b.writeInt32LE(3000, 22);
+  fs.writeFileSync(file, b);
+  assert.throws(() => resolveLocalImage(file), /4K 以上/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("resolveLocalImage: 4K-8K 的 PNG 放行", () => {
+  const dir = tempDir();
+  const file = path.join(dir, "wide.png");
+  const b = Buffer.alloc(32);
+  b.writeUInt8(0x89, 0); b.write("PNG\r\n\x1a\n", 1);
+  b.writeUInt32BE(5000, 16);
+  b.writeUInt32BE(3000, 20);
+  fs.writeFileSync(file, b);
+  const url = resolveLocalImage(file);
+  assert.match(url, /^data:image\/png;base64,/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------- readImageDimensions ----------
+
+test("readImageDimensions: PNG 尺寸", () => {
+  const dir = tempDir();
+  const file = path.join(dir, "a.png");
+  const b = Buffer.alloc(32);
+  b.writeUInt8(0x89, 0); b.write("PNG\r\n\x1a\n", 1);
+  b.writeUInt32BE(640, 16);
+  b.writeUInt32BE(480, 20);
+  fs.writeFileSync(file, b);
+  assert.deepStrictEqual(readImageDimensions(file), { width: 640, height: 480 });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("readImageDimensions: JPEG SOF 尺寸", () => {
+  const dir = tempDir();
+  const file = path.join(dir, "a.jpg");
+  const b = Buffer.alloc(32);
+  b.writeUInt8(0xff, 0); b.writeUInt8(0xd8, 1);
+  b.writeUInt8(0xff, 2); b.writeUInt8(0xc0, 3);   // SOF0
+  b.writeUInt16BE(11, 4);
+  b.writeUInt8(8, 6);
+  b.writeUInt16BE(300, 7);
+  b.writeUInt16BE(400, 9);
+  fs.writeFileSync(file, b);
+  assert.deepStrictEqual(readImageDimensions(file), { height: 300, width: 400 });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("readImageDimensions: GIF/BMP 尺寸", () => {
+  const dir = tempDir();
+  const gif = path.join(dir, "a.gif");
+  const gb = Buffer.alloc(16);
+  gb.write("GIF89a", 0);
+  gb.writeUInt16LE(100, 6);
+  gb.writeUInt16LE(50, 8);
+  fs.writeFileSync(gif, gb);
+  assert.deepStrictEqual(readImageDimensions(gif), { width: 100, height: 50 });
+  const bmp = path.join(dir, "a.bmp");
+  const bb = Buffer.alloc(32);
+  bb.write("BM", 0);
+  bb.writeInt32LE(800, 18);
+  bb.writeInt32LE(-600, 22);
+  fs.writeFileSync(bmp, bb);
+  assert.deepStrictEqual(readImageDimensions(bmp), { width: 800, height: 600 });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("readImageDimensions: 无法解析返回 null", () => {
+  const dir = tempDir();
+  const file = path.join(dir, "a.bin");
+  fs.writeFileSync(file, Buffer.alloc(32));
+  assert.strictEqual(readImageDimensions(file), null);
+  assert.strictEqual(readImageDimensions("/nonexistent/xyz.png"), null);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -373,6 +479,23 @@ test("request: 4xx 不重试，且提取 error.message", async () => {
     const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
     await assert.rejects(mod.request({ model: "m", messages: [] }), /模型未开通/);
     assert.strictEqual(calls, 1);
+  } finally {
+    server.close();
+  }
+});
+
+test("request: BASE_URL 带完整 endpoint 自动剥离后缀", async () => {
+  let gotPath = "";
+  const { server, port } = await startServer((req, res) => {
+    gotPath = req.url;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
+  });
+  try {
+    const mod = freshRequireWithBase(`http://127.0.0.1:${port}/v1/chat/completions`);
+    const text = await mod.request({ model: "m", messages: [] });
+    assert.strictEqual(text, "ok");
+    assert.strictEqual(gotPath, "/v1/chat/completions");
   } finally {
     server.close();
   }
