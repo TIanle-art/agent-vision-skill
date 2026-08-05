@@ -106,7 +106,7 @@ git clone https://github.com/TIanle-art/agent-vision-skill.git
 
 ### 手动配置
 
-1. 把 `vision.js` 拷到项目里
+1. 把 `vision.js` 拷到项目里（需要 Node.js ≥ 18，脚本零依赖，无需 npm install）
 2. 打开 `vision.js` 顶部「模型配置」区，填 API Key（替换 `sk-xxx`），确认模型名（默认 `qwen3-vl-flash`，想增强就填 `qwen3-vl-plus`；用非千问服务还需改 API 地址）
 3. 把 `CLAUDE.md` 放到项目根目录
 

@@ -191,7 +191,10 @@ function resolveLocalImage(source) {
     throw new Error(`不支持的图片格式: ${ext}（支持 jpg/jpeg/png/bmp/webp/tiff/heic）`);
   }
   if (ext === "gif") {
-    throw new Error("不支持 GIF 动图（服务端不支持该格式），请先转换为 jpg/png 再试，例如: sips -s format jpeg " + resolved + " --out " + resolved + ".jpg");
+    throw new Error(
+      "不支持 GIF 动图（服务端不支持该格式），请先转换为 jpg/png 再试\n" +
+      `（macOS: sips -s format jpeg ${resolved} --out ${resolved}.jpg；Windows: 用画图/图片工具转存为 jpg）`
+    );
   }
   const size = fs.statSync(resolved).size;
   const limit = MAX_IMAGE_MB * 1024 * 1024;
@@ -200,7 +203,7 @@ function resolveLocalImage(source) {
     throw new Error(
       `图片过大: ${(size / 1024 / 1024).toFixed(1)}MB，超过上限 ${MAX_IMAGE_MB}MB\n` +
       `（base64 编码会使体积膨胀约 33%；服务端 Base64 上限 Qwen3-VL 系列 20MB/其他 10MB，默认 7MB 为保守值）\n` +
-      `请先压缩再试，例如: sips -Z 2000 ${resolved} --out ${out}`
+      `请先压缩再试（macOS: sips -Z 2000 ${resolved} --out ${out}；Windows: 用画图/任意图片工具缩放后另存）`
     );
   }
   const dim = readImageDimensions(resolved);
@@ -211,14 +214,14 @@ function resolveLocalImage(source) {
       throw new Error(
         `图片分辨率过大: ${dim.width}x${dim.height}，超过建议上限（最长边 ${MAX_IMAGE_PX}px）\n` +
         `（超大分辨率不提升识别精度，反而易致调用超时）\n` +
-        `请先压缩再试，例如: sips -Z ${MAX_IMAGE_PX} ${resolved} --out ${out}`
+        `请先压缩再试（macOS: sips -Z ${MAX_IMAGE_PX} ${resolved} --out ${out}；Windows: 用画图/任意图片工具缩放后另存）`
       );
     }
     if (longEdge > PX_4K && !["jpg", "jpeg", "png"].includes(ext)) {
       const out = resolved.replace(/(\.[^.]+)$/, "_small.jpg");
       throw new Error(
         `图片分辨率 ${dim.width}x${dim.height}（4K 以上）服务端仅支持 jpg/jpeg/png，当前为 ${ext}\n` +
-        `请先转换格式，例如: sips -s format jpeg ${resolved} --out ${out}`
+        `请先转换格式（macOS: sips -s format jpeg ${resolved} --out ${out}；Windows: 用图片工具转存为 jpg）`
       );
     }
   }
@@ -440,7 +443,8 @@ function main() {
 
   (async () => {
     const failed = await runWithConcurrency(tasks, CONCURRENCY, parsed.prompt, { json: parsed.json });
-    process.exit(failed ? 1 : 0);
+    // 用 exitCode 而非 process.exit()：后者会截断 stdout 管道输出（大 JSON 可能被切掉）
+    process.exitCode = failed ? 1 : 0;
   })();
 }
 

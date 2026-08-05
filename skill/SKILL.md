@@ -60,7 +60,7 @@ DASHSCOPE_API_KEY=sk-xxx
 - `文件不存在: <路径>`：图片路径写错，先确认文件真实存在
 - `API 401/403`：API Key 错误或失效
 - `API 404`：模型名错误或未开通，或 BASE_URL 服务地址错误
-- `图片过大`：超过 7MB（可用 `sips -Z 2000 <图片> --out <新文件>` 压缩，或改 `.env` 的 `VISION_MAX_IMAGE_MB`）
-- `图片分辨率过大`：超过 8K（可用 `sips -Z 7680 <图片> --out <新文件>` 压缩）
-- `不支持 GIF 动图`：gif 需先转 jpg/png（`sips -s format jpeg <图片> --out <新文件>.jpg`）
+- `图片过大`：超过 7MB（macOS 可用 `sips -Z 2000 <图片> --out <新文件>` 压缩，Windows 用画图/图片工具缩放；或改 `.env` 的 `VISION_MAX_IMAGE_MB`）
+- `图片分辨率过大`：超过 8K（macOS 可用 `sips -Z 7680 <图片> --out <新文件>` 压缩，Windows 用画图/图片工具缩放）
+- `不支持 GIF 动图`：gif 需先转 jpg/png（macOS 可用 `sips -s format jpeg <图片> --out <新文件>.jpg`，Windows 用图片工具转存）
 - 失败会自动重试（429/5xx/超时，最多 2 次）
