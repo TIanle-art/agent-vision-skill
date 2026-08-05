@@ -100,7 +100,7 @@ git clone https://github.com/TIanle-art/agent-vision-skill.git
 
 装完把 API Key 写进 skill 目录的 `.env`（复制 `.env.example`），之后直接发图片即可。**切换模型随时说一声**——"换增强视觉模型/换 plus"→ `qwen3-vl-plus`，"换回 flash"→ `qwen3-vl-flash`。
 
-不支持 SKILL.md 的 agent（如 Codex、Windsurf）：把 `rules/AGENTS.md` 的内容合并到项目的规则文件，并把 `<VISION_DIR>` 替换为 `vision.js` 实际路径。
+不支持 SKILL.md 的 agent（如 Codex、Windsurf）：改用上文"场景 A / 手动配置"的粘贴模式，把规则合入其约定的规则文件（Codex 用 `AGENTS.md`，其他助手按其约定）。
 
 ### 手动配置
 
@@ -140,7 +140,6 @@ VISION_MODEL=qwen3-vl-flash
 | `vision.js` | 核心脚本，OpenAI 兼容格式（与 `skill/vision.js` 同步） |
 | `CLAUDE.md` | 识图规则说明，让 AI 知道何时调用 vision.js（其他助手可转为 `.clinerules` 等格式） |
 | `skill/SKILL.md` + `skill/vision.js` | 标准 Agent Skill 形态，各支持 SKILL.md 的 agent 直接安装 |
-| `rules/AGENTS.md` | 不支持 SKILL.md 的 agent（Codex/Windsurf）的桥接规则 |
 | `.env.example` | 环境变量示例，复制为 `.env` 填 Key 即可 |
 | `test/` | 单元测试，`npm test` 运行 |
 

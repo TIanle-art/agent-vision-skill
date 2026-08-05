@@ -17,3 +17,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
       - run: npm test
+      - name: 检查 skill/ 副本与根目录同步
+        run: |
+          diff <(grep -v '注意: 本文件与' vision.js) <(grep -v '注意: 本文件与' skill/vision.js)
+          diff .env.example skill/.env.example
