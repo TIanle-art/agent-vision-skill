@@ -21,3 +21,7 @@ jobs:
         run: |
           diff <(grep -v '注意: 本文件与' vision.js) <(grep -v '注意: 本文件与' skill/vision.js)
           diff .env.example skill/.env.example
+      - name: 检查 CLAUDE.md 与 skill/SKILL.md 公共段同步
+        run: |
+          diff <(awk '/^## 触发场景/{f=1} s && /^## / && !/^## 切换模型/{exit} /^## 切换模型/{s=1} f' CLAUDE.md | sed 's#"<本 skill 目录>/vision.js"#vision.js#g') \
+               <(awk '/^## 触发场景/{f=1} s && /^## / && !/^## 切换模型/{exit} /^## 切换模型/{s=1} f' skill/SKILL.md | sed 's#"<本 skill 目录>/vision.js"#vision.js#g')

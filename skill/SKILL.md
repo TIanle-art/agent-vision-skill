@@ -31,11 +31,19 @@ node "<本 skill 目录>/vision.js" "图片1路径" "图片2路径" "用中文�
 
 ## 网络图片
 
-用户发来的是图片 URL 时，直接传即可（自动识别，也可用 `--url`）：
+用户发来的是图片 URL 时，直接传即可（自动识别，也可用 `--url` 显式指定）：
 
 ```
 node "<本 skill 目录>/vision.js" "https://example.com/a.png" "用中文描述这张图片"
 ```
+
+## 切换模型
+
+用户说"换增强视觉模型"或"换 plus"时：把视觉模型改为 `qwen3-vl-plus`。
+用户说"换回 flash"时：改回 `qwen3-vl-flash`。
+用户指定其他模型名时，按其要求填写。
+
+改哪里：先看 `vision.js` 同目录有没有 `.env` 文件——有就改 `.env` 里的 `VISION_MODEL`（环境变量优先级高于代码），没有 `.env` 才改 `vision.js` 顶部模型配置区的 `MODEL`。
 
 ## 配置
 
@@ -46,14 +54,6 @@ DASHSCOPE_API_KEY=sk-xxx
 ```
 
 没有 Key 时：提示用户去 https://bailian.console.aliyun.com/ 注册申请（新用户有免费额度），拿到 Key 再继续。
-
-## 切换模型
-
-用户说"换增强视觉模型"或"换 plus"时：把视觉模型改为 `qwen3-vl-plus`。
-用户说"换回 flash"时：改回 `qwen3-vl-flash`。
-用户指定其他模型名时，按其要求填写。
-
-改哪里：先看 `vision.js` 同目录有没有 `.env` 文件——有就改 `.env` 里的 `VISION_MODEL`（环境变量优先级高于代码），没有 `.env` 才改 `vision.js` 顶部模型配置区的 `MODEL`。
 
 ## 常见错误
 
