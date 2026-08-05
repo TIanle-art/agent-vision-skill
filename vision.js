@@ -6,6 +6,7 @@
  *   node vision.js <图片路径> [问题]
  *   node vision.js a.jpg b.jpg [问题]      # 多图逐张识别
  *   node vision.js --url <图片链接> [问题]  # 网络图片
+ *   node vision.js <图片链接> [问题]       # 网络图片（URL 自动识别）
  *   node vision.js --help
  *
  * 配置: 见下方"模型配置"区，直接改代码填 Key 即可（无需其他文件）。
@@ -26,7 +27,7 @@ function loadDotEnv(filePath = path.join(__dirname, ".env")) {
     const eq = line.indexOf("=");
     if (eq <= 0) continue;
     const key = line.slice(0, eq).trim();
-    let value = line.slice(eq + 1).trim();
+    let value = line.slice(eq + 1).replace(/\s+#.*$/, "").trim();
     if (value.length >= 2 &&
         ((value[0] === '"' && value[value.length - 1] === '"') ||
          (value[0] === "'" && value[value.length - 1] === "'"))) {
@@ -41,15 +42,18 @@ loadDotEnv();
 // 当前默认：qwen3-vl-flash（便宜，够用）
 // 想增强识图质量？把下面改成 qwen3-vl-plus（更强，稍贵）
 // 或直接对 AI 说："换增强视觉模型" / "换 plus"；说"换回 flash"恢复默认。
+// 注意：若同目录 .env 里设置了 VISION_MODEL，它的优先级高于这里，改这里不生效。
 // --------------------------------------------------
 const API_KEY = process.env.DASHSCOPE_API_KEY || "sk-xxx";   // ← 填你的 API Key
 const MODEL   = process.env.VISION_MODEL || "qwen3-vl-flash";
 const BASE_URL = process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const MAX_TOKENS  = Number(process.env.VISION_MAX_TOKENS) || 1024;
 const MAX_IMAGE_MB = Number(process.env.VISION_MAX_IMAGE_MB) || 7;
-const MAX_IMAGES = 20;
+const MAX_IMAGES = Number(process.env.VISION_MAX_IMAGES) || 20;
 const CONCURRENCY = Number(process.env.VISION_CONCURRENCY) || 3;
 const TIMEOUT_MS = 60000;
+const MAX_RETRIES = Number(process.env.VISION_MAX_RETRIES) || 2;
+const RETRY_BASE_DELAY_MS = 600;
 
 const IMAGE_EXTS = ["jpg", "jpeg", "png", "gif", "webp", "bmp"];
 const MIME_MAP = { jpg: "jpeg", jpeg: "jpeg", png: "png", gif: "gif", webp: "webp", bmp: "bmp" };
@@ -58,14 +62,16 @@ const DEFAULT_PROMPT = "请详细描述这张图片的内容。";
 const HELP = `用法:
   node vision.js <图片路径> [问题]
   node vision.js a.jpg b.jpg [问题]      # 多图逐张识别
-  node vision.js --url <图片链接> [问题]  # 网络图片
+  node vision.js <图片链接> [问题]       # 网络图片（URL 自动识别，可多个）
+  node vision.js --url <图片链接> [问题] # 网络图片（显式指定，可重复）
   node vision.js --help
 
 参数:
   <路径>       本地图片（jpg/jpeg/png/gif/webp/bmp），可多个
+  <链接>       网络图片 URL（含 :// 自动识别，可多个；也可用 --url 显式指定）
   [问题]       要问的问题，多个词自动拼接（默认: ${DEFAULT_PROMPT}）
   --url <链接> 网络图片链接，可重复使用
-  -p, --prompt <文字>  显式指定问题（优先级最高）
+  -p, --prompt <文字>  指定问题（其后未被识别的词仍会追加到问题后）
   -h, --help   显示本帮助
 
 环境变量（可选，一般不填）:
@@ -75,6 +81,8 @@ const HELP = `用法:
   VISION_MAX_TOKENS      最大输出 token（默认 1024）
   VISION_MAX_IMAGE_MB    单图大小上限 MB（默认 7）
   VISION_CONCURRENCY     多图并发数（默认 3）
+  VISION_MAX_IMAGES      单次最多图片数（默认 20）
+  VISION_MAX_RETRIES     失败自动重试次数（默认 2；429/5xx/超时会重试）
 
 模型切换:
   默认 qwen3-vl-flash（便宜）; 想增强识图改为 qwen3-vl-plus
@@ -83,6 +91,7 @@ const HELP = `用法:
 示例:
   node vision.js shot.png "截图里有什么报错"
   node vision.js a.jpg b.jpg "对比这两张图"
+  node vision.js https://example.com/a.png "描述这张图片"
   node vision.js --url https://example.com/a.png "描述这张图片"`;
 
 function isImagePath(p) {
@@ -107,6 +116,8 @@ function parseArgs(argv) {
       prompt = v;
     } else if (a.startsWith("--")) {
       throw new Error(`未知参数: ${a}（用 --help 查看用法）`);
+    } else if (a.includes("://")) {
+      urls.push(a);
     } else if (isImagePath(a)) {
       images.push(a);
     } else {
@@ -171,9 +182,16 @@ function checkRemoteSize(urlStr, maxBytes = MAX_IMAGE_MB * 1024 * 1024) {
   });
 }
 
-function request(payload) {
-  const url = new URL(BASE_URL.replace(/\/?$/, "/") + "chat/completions");
-  const body = JSON.stringify(payload);
+function extractApiError(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    const msg = parsed?.error?.message || parsed?.message;
+    if (typeof msg === "string" && msg) return msg;
+  } catch {}
+  return raw.slice(0, 300);
+}
+
+function requestOnce(url, body) {
   const transport = url.protocol === "https:" ? https : http;
 
   return new Promise((resolve, reject) => {
@@ -194,19 +212,51 @@ function request(payload) {
             hint = "：请检查 API Key 是否正确/是否有效";
           } else if (res.statusCode === 404) {
             hint = "：请检查模型名是否正确/是否已开通";
+          } else if (res.statusCode === 429) {
+            hint = "：触发限流或额度不足，稍后自动重试";
           }
-          return reject(new Error(`API ${res.statusCode}${hint}: ${data.slice(0, 300)}`));
+          const err = new Error(`API ${res.statusCode}${hint}: ${extractApiError(data)}`);
+          if (res.statusCode === 429 || res.statusCode >= 500) {
+            err.retryable = true;
+            err.retryAfter = res.headers["retry-after"];
+          }
+          return reject(err);
         }
         try {
-          resolve(JSON.parse(data)?.choices?.[0]?.message?.content || data);
+          const parsed = JSON.parse(data);
+          if (parsed?.usage) {
+            console.error(
+              `[用量] 输入 ${parsed.usage.prompt_tokens ?? "-"} / 输出 ${parsed.usage.completion_tokens ?? "-"} tokens`
+            );
+          }
+          resolve(parsed?.choices?.[0]?.message?.content || data);
         } catch { resolve(data); }
       });
     });
-    req.on("error", reject);
+    req.on("error", (e) => { e.retryable = true; reject(e); });
     req.setTimeout(TIMEOUT_MS, () => req.destroy(new Error(`请求超时（${TIMEOUT_MS / 1000}s）`)));
     req.write(body);
     req.end();
   });
+}
+
+// 429 / 5xx / 网络错误 / 超时自动重试（最多 MAX_RETRIES 次，指数退避；有 Retry-After 则优先使用）
+async function request(payload) {
+  const url = new URL(BASE_URL.replace(/\/?$/, "/") + "chat/completions");
+  const body = JSON.stringify(payload);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await requestOnce(url, body);
+    } catch (e) {
+      if (!e.retryable || attempt >= MAX_RETRIES) throw e;
+      const ra = Number(e.retryAfter);
+      const delay = Number.isFinite(ra) && ra > 0
+        ? Math.min(ra * 1000, 10000)
+        : RETRY_BASE_DELAY_MS * 2 ** attempt;
+      console.error(`API 调用失败（${e.message.slice(0, 60)}），${(delay / 1000).toFixed(1)}s 后自动重试（${attempt + 1}/${MAX_RETRIES}）`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
 }
 
 async function describe(imageUrl, prompt) {
@@ -304,4 +354,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { parseArgs, isImagePath, resolveLocalImage, loadDotEnv, checkRemoteSize };
+module.exports = { parseArgs, isImagePath, resolveLocalImage, loadDotEnv, checkRemoteSize, request, runWithConcurrency };

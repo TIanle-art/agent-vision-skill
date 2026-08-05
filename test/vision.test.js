@@ -1,4 +1,4 @@
-const { test } = require("node:test");
+const { test, mock } = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -44,6 +44,13 @@ test("parseArgs: --url 网络图", () => {
 test("parseArgs: --url 可重复", () => {
   const r = parseArgs(["--url", "https://a.com/1.png", "--url", "https://b.com/2.png"]);
   assert.deepStrictEqual(r.urls, ["https://a.com/1.png", "https://b.com/2.png"]);
+});
+
+test("parseArgs: 裸 URL 自动识别为网络图", () => {
+  const r = parseArgs(["https://example.com/a.png", "描述"]);
+  assert.deepStrictEqual(r.urls, ["https://example.com/a.png"]);
+  assert.deepStrictEqual(r.images, []);
+  assert.strictEqual(r.prompt, "描述");
 });
 
 test("parseArgs: -p 显式问题为基，后续词追加", () => {
@@ -159,6 +166,17 @@ test("loadDotEnv: CRLF 与两侧空格", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("loadDotEnv: 行内注释被忽略，无空格 # 保留", () => {
+  const dir = tempDir();
+  const envFile = path.join(dir, ".env");
+  fs.writeFileSync(envFile, "MODEL=qwen3-vl-plus # 增强模型\nKEY=sk-abc#keep\n");
+  loadDotEnv(envFile);
+  assert.strictEqual(process.env.MODEL, "qwen3-vl-plus");
+  assert.strictEqual(process.env.KEY, "sk-abc#keep");
+  delete process.env.MODEL; delete process.env.KEY;
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("loadDotEnv: 不覆盖已有环境变量", () => {
   process.env.G = "existing";
   const dir = tempDir();
@@ -231,4 +249,176 @@ test("checkRemoteSize: 无 Content-Length 放行（最佳努力）", async () =>
 
 test("checkRemoteSize: 无法访问的 URL 放行（最佳努力）", async () => {
   await assert.doesNotReject(checkRemoteSize("http://nonexistent-host-xyz.invalid/img.png"));
+});
+
+// ---------- request（mock OpenAI 兼容服务器） ----------
+
+// request 在模块加载时定值（BASE_URL/API_KEY/MAX_RETRIES 等），需带环境变量重新加载模块
+function freshRequireWithBase(base, extra = {}) {
+  const keys = ["DASHSCOPE_BASE_URL", "DASHSCOPE_API_KEY", "VISION_MAX_RETRIES", ...Object.keys(extra)];
+  const prev = {};
+  for (const k of keys) prev[k] = process.env[k];
+  process.env.DASHSCOPE_BASE_URL = base;
+  process.env.DASHSCOPE_API_KEY = "sk-test";
+  process.env.VISION_MAX_RETRIES = "3";
+  for (const [k, v] of Object.entries(extra)) process.env[k] = String(v);
+  delete require.cache[require.resolve("../vision.js")];
+  const mod = require("../vision.js");
+  for (const [k, v] of Object.entries(prev)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  return mod;
+}
+
+test("request: 5xx 自动重试后成功", async () => {
+  let calls = 0;
+  const { server, port } = await startServer((req, res) => {
+    calls++;
+    if (calls < 3) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "boom" } }));
+    } else {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
+    }
+  });
+  try {
+    const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+    const text = await mod.request({ model: "m", messages: [] });
+    assert.strictEqual(text, "ok");
+    assert.strictEqual(calls, 3);
+  } finally {
+    server.close();
+  }
+});
+
+test("request: 429 后尊重 Retry-After 重试成功", async () => {
+  let calls = 0;
+  const { server, port } = await startServer((req, res) => {
+    calls++;
+    if (calls === 1) {
+      res.writeHead(429, { "Content-Type": "application/json", "Retry-After": "0" });
+      res.end(JSON.stringify({ error: { message: "rate limit" } }));
+    } else {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
+    }
+  });
+  try {
+    const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+    const text = await mod.request({ model: "m", messages: [] });
+    assert.strictEqual(text, "ok");
+    assert.strictEqual(calls, 2);
+  } finally {
+    server.close();
+  }
+});
+
+test("request: 4xx 不重试，且提取 error.message", async () => {
+  let calls = 0;
+  const { server, port } = await startServer((req, res) => {
+    calls++;
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: { message: "模型未开通" } }));
+  });
+  try {
+    const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+    await assert.rejects(mod.request({ model: "m", messages: [] }), /模型未开通/);
+    assert.strictEqual(calls, 1);
+  } finally {
+    server.close();
+  }
+});
+
+// ---------- runWithConcurrency ----------
+
+test("runWithConcurrency: 按并发上限执行、结果按输入顺序输出", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const { server, port } = await startServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => body += c);
+    req.on("end", () => {
+      const url = JSON.parse(body).messages[0].content[0].image_url.url;
+      const idx = url.match(/img(\d)/)[1];
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      setTimeout(() => {
+        inFlight--;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ choices: [{ message: { content: `描述${idx}` } }] }));
+      }, 30);
+    });
+  });
+  try {
+    const log = mock.method(console, "log");
+    try {
+      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`, { VISION_CONCURRENCY: 2 });
+      const tasks = [1, 2, 3].map(i => ({
+        label: `img${i}.png`,
+        resolve: () => Promise.resolve(`http://x/img${i}.png`),
+      }));
+      const failed = await mod.runWithConcurrency(tasks, 2, "描述");
+      assert.strictEqual(failed, false);
+      assert.strictEqual(maxInFlight, 2);
+      const printed = log.mock.calls.map(c => String(c.arguments[0]));
+      const idxOrder = printed.filter(t => /^描述\d/.test(t)).map(t => t.replace("描述", ""));
+      assert.deepStrictEqual(idxOrder, ["1", "2", "3"]);
+    } finally {
+      mock.restoreAll();
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test("runWithConcurrency: 单图失败不中断其他，返回失败标记", async () => {
+  const { server, port } = await startServer((req, res) => {
+    req.resume();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ choices: [{ message: { content: "描述B" } }] }));
+  });
+  try {
+    const log = mock.method(console, "log");
+    const err = mock.method(console, "error");
+    try {
+      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+      const tasks = [
+        { label: "missing.png", resolve: () => resolveLocalImage("/nonexistent/xyz.png") },
+        { label: "b.png", resolve: () => Promise.resolve("data:image/png;base64,AAAA") },
+      ];
+      const failed = await mod.runWithConcurrency(tasks, 2, "描述");
+      assert.strictEqual(failed, true);
+      assert.ok(log.mock.calls.some(c => String(c.arguments[0]).includes("描述B")));
+      assert.ok(err.mock.calls.some(c => String(c.arguments[0]).includes("识图失败 (missing.png)")));
+    } finally {
+      mock.restoreAll();
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test("runWithConcurrency: 单图直接输出文字，无分隔头", async () => {
+  const { server, port } = await startServer((req, res) => {
+    req.resume();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ choices: [{ message: { content: "结果文本" } }] }));
+  });
+  try {
+    const log = mock.method(console, "log");
+    try {
+      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+      const tasks = [{ label: "a.png", resolve: () => Promise.resolve("http://x/a.png") }];
+      const failed = await mod.runWithConcurrency(tasks, 3, "q");
+      assert.strictEqual(failed, false);
+      assert.strictEqual(log.mock.calls.length, 1);
+      assert.strictEqual(String(log.mock.calls[0].arguments[0]), "结果文本");
+    } finally {
+      mock.restoreAll();
+    }
+  } finally {
+    server.close();
+  }
 });
