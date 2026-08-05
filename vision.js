@@ -199,7 +199,7 @@ function resolveLocalImage(source) {
     const out = resolved.replace(/(\.[^.]+)$/, "_small$1");
     throw new Error(
       `图片过大: ${(size / 1024 / 1024).toFixed(1)}MB，超过上限 ${MAX_IMAGE_MB}MB\n` +
-      `（base64 编码会使体积膨胀约 33%，API 上限约 10MB）\n` +
+      `（base64 编码会使体积膨胀约 33%；服务端 Base64 上限 Qwen3-VL 系列 20MB/其他 10MB，默认 7MB 为保守值）\n` +
       `请先压缩再试，例如: sips -Z 2000 ${resolved} --out ${out}`
     );
   }
@@ -215,7 +215,7 @@ function resolveLocalImage(source) {
       );
     }
     if (longEdge > PX_4K && !["jpg", "jpeg", "png"].includes(ext)) {
-      const out = resolved.replace(/(\.[^.]+)$/, "_small$1");
+      const out = resolved.replace(/(\.[^.]+)$/, "_small.jpg");
       throw new Error(
         `图片分辨率 ${dim.width}x${dim.height}（4K 以上）服务端仅支持 jpg/jpeg/png，当前为 ${ext}\n` +
         `请先转换格式，例如: sips -s format jpeg ${resolved} --out ${out}`
@@ -226,7 +226,7 @@ function resolveLocalImage(source) {
   return `data:image/${MIME_MAP[ext]};base64,${data.toString("base64")}`;
 }
 
-// 网络图片大小预检（最佳努力）：HEAD 取 Content-Length，超限报错；失败/无长度则放行，交给 API 兜底
+// 网络图片预检（最佳努力）：HEAD 取 Content-Length/Content-Type 检查；失败/无信息则放行，交给 API 兜底
 function checkRemoteSize(urlStr, maxBytes = MAX_IMAGE_MB * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let hops = 0;
@@ -234,6 +234,9 @@ function checkRemoteSize(urlStr, maxBytes = MAX_IMAGE_MB * 1024 * 1024) {
       if (hops++ > 5) return resolve();
       let u;
       try { u = new URL(target); } catch { return resolve(); }
+      if (!["http:", "https:"].includes(u.protocol)) {
+        return reject(new Error(`不支持的图片链接协议: ${u.protocol}（仅支持 http/https）`));
+      }
       const transport = u.protocol === "https:" ? https : http;
       const req = transport.request(u, {
         method: "HEAD",
@@ -248,6 +251,10 @@ function checkRemoteSize(urlStr, maxBytes = MAX_IMAGE_MB * 1024 * 1024) {
           return reject(new Error(
             `图片过大: ${(len / 1024 / 1024).toFixed(1)}MB，超过上限 ${MAX_IMAGE_MB}MB，请压缩后重试`
           ));
+        }
+        const ct = String(res.headers["content-type"] || "").toLowerCase();
+        if (ct.includes("gif")) {
+          return reject(new Error("不支持 GIF 动图（服务端不支持该格式），请先转换为 jpg/png 再试"));
         }
         resolve();
       });

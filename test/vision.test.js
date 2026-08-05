@@ -197,7 +197,7 @@ test("resolveLocalImage: 分辨率超过 8K 拦截", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("resolveLocalImage: 4K-8K 非 jpg/png 拦截", () => {
+test("resolveLocalImage: 4K-8K 非 jpg/png 拦截，转换命令用 jpg 后缀", () => {
   const dir = tempDir();
   const file = path.join(dir, "wide.bmp");
   const b = Buffer.alloc(32);
@@ -205,7 +205,11 @@ test("resolveLocalImage: 4K-8K 非 jpg/png 拦截", () => {
   b.writeInt32LE(5000, 18);
   b.writeInt32LE(3000, 22);
   fs.writeFileSync(file, b);
-  assert.throws(() => resolveLocalImage(file), /4K 以上/);
+  assert.throws(() => resolveLocalImage(file), (e) => {
+    assert.match(e.message, /4K 以上/);
+    assert.match(e.message, /sips -s format jpeg .* --out .*\.jpg/);
+    return true;
+  });
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -402,6 +406,26 @@ test("checkRemoteSize: 无 Content-Length 放行（最佳努力）", async () =>
 
 test("checkRemoteSize: 无法访问的 URL 放行（最佳努力）", async () => {
   await assert.doesNotReject(checkRemoteSize("http://nonexistent-host-xyz.invalid/img.png"));
+});
+
+test("checkRemoteSize: Content-Type 为 gif 拦截", async () => {
+  const { server, port } = await startServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "image/gif" });
+    res.end();
+  });
+  try {
+    await assert.rejects(
+      checkRemoteSize(`http://127.0.0.1:${port}/anim.gif`),
+      /不支持 GIF/
+    );
+  } finally {
+    server.close();
+  }
+});
+
+test("checkRemoteSize: 非 http/https 协议拒绝", async () => {
+  await assert.rejects(checkRemoteSize("file:///etc/passwd"), /不支持的图片链接协议/);
+  await assert.rejects(checkRemoteSize("data:image/png;base64,AAAA"), /不支持的图片链接协议/);
 });
 
 // ---------- request（mock OpenAI 兼容服务器） ----------
