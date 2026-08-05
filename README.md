@@ -1,5 +1,7 @@
 # Agent Vision Skill
 
+![test](https://github.com/TIanle-art/agent-vision-skill/actions/workflows/test.yml/badge.svg)
+
 让没有识图能力的模型获得识图能力——把图片发给有 vision 的模型，用文字描述回来。
 
 DeepSeek V4、GLM 等纯文本大模型无法直接理解图片内容，收到图片只能看到路径或文件名。装上本工具后，图片会自动转成文字描述喂给模型，它们也能"看图"。
@@ -36,15 +38,9 @@ DeepSeek V4、GLM 等纯文本大模型无法直接理解图片内容，收到�
    - **或者（推荐）**：复制 `.env.example` 为 `.env`，把 Key 和模型写在 `.env` 里，见下方「用 .env 存 Key」小节
 3. 把 `CLAUDE.md` 的内容合并到项目的说明文件（Claude Code 用 `CLAUDE.md`，Cline 用 `.clinerules`，其他助手按其约定；没有就新建）
 4. 验证配置：运行 `node vision.js --help`，能看到用法输出即脚本可用
-5. 告诉用户：配置完成，以后直接发图片就行，AI 会自动识图。**想切换模型随时说一声**——"换增强视觉模型"或"换 plus"就是更强的 `qwen3-vl-plus`，"换回 flash"回到默认。
+5. 告诉用户：配置完成，以后直接发图片就行，AI 会自动识图。**想切换模型随时说一声**——"换增强视觉模型"或"换 plus"就是更强的 `qwen3-vl-plus`，"换回 flash"回到默认。（AI 会优先改 `.env` 里的 `VISION_MODEL`，没有 `.env` 才改 `vision.js` 顶部）
 
-### 场景 B：用户要在 cyberboss 里用
-
-1. 先执行场景 A 的所有步骤
-2. 接着读这个仓库里的 `cyberboss-setup.md`，按它说的改 persona 和 `src/core/app.js`
-3. 告诉用户：重启 cyberboss 后生效，微信里直接发图片就能识图。**想切换模型随时说一声**——"换增强视觉模型"或"换 plus"就是更强的 `qwen3-vl-plus`，"换回 flash"回到默认。
-
-### 场景 C：用户只想了解这是什么
+### 场景 B：用户只想了解这是什么
 
 简要解释：
 - `vision.js` 是核心，读取图片 → base64 → 发给千问视觉模型 API → 返回文字描述
@@ -67,7 +63,7 @@ DeepSeek V4、GLM 等纯文本大模型无法直接理解图片内容，收到�
 | 阿里云百炼 | `qwen3-vl-plus` | 更强，稍贵 |
 | 其他 | 任何 OpenAI 兼容格式 | 改 `BASE_URL` 和模型名即可 |
 
-> 注：百炼新用户赠送免费 token 额度，上述模型均适用。成本按 token 计费，`qwen3-vl-flash` 单次识图通常几分钱，免费额度足够日常使用很久（具体以百炼定价页为准）。如旧系列下线，可无缝切换官方新系列 `qwen3.7-plus`（已实测支持识图）。
+> 注：百炼新用户赠送免费 token 额度，上述模型均适用。成本按 token 计费，`qwen3-vl-flash` 单次识图通常几分钱，免费额度足够日常使用很久（具体以百炼定价页为准）。模型以百炼控制台实际列表为准：如旧系列下线，可无缝切换官方新系列 `qwen3.7-plus`（旗舰，1M 上下文，已实测支持识图）或 `qwen3.7-flash`（新系列低成本）。
 
 ### 自动配置
 
@@ -109,7 +105,7 @@ VISION_MODEL=qwen3-vl-flash
 
 ### 如何换更强的模型
 
-跟 AI 说一句"换增强视觉模型"或"换 plus"即可（AI 会自动改 `vision.js` 的 `MODEL`）。也可以手动改 `vision.js` 顶部一行：
+跟 AI 说一句"换增强视觉模型"或"换 plus"即可（AI 会自动改配置：优先改 `.env` 里的 `VISION_MODEL`，没有 `.env` 才改 `vision.js` 顶部）。也可以手动改 `vision.js` 顶部一行：
 
 | 想要的效果 | MODEL 填 | 备注 |
 |------|------|------|
@@ -124,8 +120,7 @@ VISION_MODEL=qwen3-vl-flash
 |------|------|
 | `vision.js` | 核心脚本，OpenAI 兼容格式 |
 | `CLAUDE.md` | 识图规则说明，让 AI 知道何时调用 vision.js（其他助手可转为 `.clinerules` 等格式） |
-| `cyberboss-setup.md` | cyberboss 自动配置指令 |
 | `.env.example` | 环境变量示例，复制为 `.env` 填 Key 即可 |
 | `test/` | 单元测试，`npm test` 运行 |
 
-> ⚠️ 安全提醒：`vision.js` 里填了真实的 API Key 后，**切勿把该文件提交到 GitHub**。更稳妥的做法：用 `.env` 文件存 Key（已被 gitignore），或填完 Key 后执行 `git update-index --skip-worktree vision.js`，此后 git 提交会自动忽略 vision.js 的改动，从机制上杜绝误传 Key。
+> ⚠️ 安全提醒：`vision.js` 里填了真实的 API Key 后，**切勿把该文件提交到 GitHub**。更稳妥的做法：用 `.env` 文件存 Key（已被 gitignore）。完整说明见 [SECURITY.md](SECURITY.md)。

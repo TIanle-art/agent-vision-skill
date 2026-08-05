@@ -6,5 +6,23 @@
   "scripts": {
     "test": "node --test"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TIanle-art/agent-vision-skill.git"
+  },
+  "keywords": [
+    "vision",
+    "image",
+    "qwen",
+    "qwen-vl",
+    "dashscope",
+    "识图",
+    "claude",
+    "opencode"
+  ],
+  "author": "TIanle-art",
+  "engines": {
+    "node": ">=18"
+  }
 }

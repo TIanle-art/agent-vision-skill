@@ -32,9 +32,11 @@ node vision.js --url "https://example.com/a.png" "用中文描述这张图片"
 
 ## 切换模型
 
-用户说"换增强视觉模型"或"换 plus"时：把 `vision.js` 顶部模型配置区的 `MODEL` 改为 `qwen3-vl-plus`。
+用户说"换增强视觉模型"或"换 plus"时：把视觉模型改为 `qwen3-vl-plus`。
 用户说"换回 flash"时：改回 `qwen3-vl-flash`。
 用户指定其他模型名时，按其要求填写。
+
+改哪里：先看同目录有没有 `.env` 文件——有就改 `.env` 里的 `VISION_MODEL`（环境变量优先级高于代码），没有 `.env` 才改 `vision.js` 顶部模型配置区的 `MODEL`。
 
 ## 配置好之后
 
