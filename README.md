@@ -2,7 +2,9 @@
 
 让没有识图能力的模型获得识图能力——把图片发给有 vision 的模型，用文字描述回来。
 
-适用于 Claude Code、Cline、Cyberboss 等任何能执行 node 脚本的 AI 编程助手/智能体，不绑定特定产品。
+DeepSeek V4、GLM 等纯文本大模型无法直接理解图片内容，收到图片只能看到路径或文件名。装上本工具后，图片会自动转成文字描述喂给模型，它们也能"看图"。
+
+适用于 Claude Code、Codex、opencode、Cline、Cyberboss 等任何能执行 node 脚本的 AI 编程助手/智能体，不绑定特定产品。
 
 > 本仓库基于 [asuojun/claude-vision-skill](https://github.com/asuojun/claude-vision-skill) 修改，感谢原作者。
 
@@ -55,7 +57,7 @@
 
 ### 这是什么
 
-一个让 DeepSeek 等无 vision 能力的模型也能"看图"的脚本。配置好之后，直接发图片 AI 就会自动识别。
+一个让 DeepSeek、GLM 等无 vision 能力的模型也能"看图"的脚本。配置好之后，直接发图片 AI 就会自动识别。
 
 ### 推荐识图服务
 
