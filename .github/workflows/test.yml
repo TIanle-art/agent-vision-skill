@@ -17,15 +17,10 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
       - run: npm test
-      - name: 检查 vision/scripts/ 副本与根目录同步
+      - name: 检查脚本双形态副本完全一致
         run: |
-          diff <(sed '/^\/\/ 读取.*\.env/,/^loadDotEnv();/d' vision.js) <(sed '/^\/\/ 读取.*\.env/,/^loadDotEnv();/d' vision/scripts/vision.js)
+          diff vision.js vision/scripts/vision.js
           diff .env.example vision/.env.example
-      - name: 检查 CLAUDE.md 与 vision/SKILL.md 公共段同步
+      - name: 检查规则正文（AGENTS.md 识图段与 SKILL.md 除 frontmatter 外一致）
         run: |
-          diff <(awk '/^## 触发场景/{f=1} s && /^## / && !/^## 切换模型/{exit} /^## 切换模型/{s=1} f' CLAUDE.md | sed 's#node vision.js#node vision.js#g') \
-               <(awk '/^## 触发场景/{f=1} s && /^## / && !/^## 切换模型/{exit} /^## 切换模型/{s=1} f' vision/SKILL.md | sed 's#node "scripts/vision.js"#node vision.js#g')
-      - name: 检查 CLAUDE.md 与 vision/SKILL.md 公共段同步
-        run: |
-          diff <(awk '/^## 触发场景/{f=1} s && /^## / && !/^## 切换模型/{exit} /^## 切换模型/{s=1} f' CLAUDE.md | sed 's#node vision.js#node vision.js#g') \
-               <(awk '/^## 触发场景/{f=1} s && /^## / && !/^## 切换模型/{exit} /^## 切换模型/{s=1} f' vision/SKILL.md | sed 's#node "${CLAUDE_SKILL_DIR}/scripts/vision.js"#node vision.js#g')
+          diff <(sed -n '/^# 识图能力/,$p' vision/SKILL.md | sed 's#node "scripts/vision.js"#node vision.js#g') <(sed -n '/^# 识图能力/,$p' AGENTS.md)

@@ -9,9 +9,9 @@
  *   node vision.js <图片链接> [问题]       # 网络图片（URL 自动识别）
  *   node vision.js --help
  *
- * 配置: 把 skill 根目录的 .env.example 复制为 .env 并填入 Key（.env 已被 gitignore，不会误提交）；
+ * 配置: 把本文件同目录（或 skill 根目录）的 .env.example 复制为 .env 并填入 Key（.env 已被 gitignore，不会误提交）；
  *       也可改下方"模型配置"区直接填（改代码有误提交 Key 的风险，不推荐）。
- * 注意: 本文件与仓库根目录 vision.js 保持同步，改动请同时更新两份。
+ * 注意: 本文件与 vision/scripts/vision.js 为同一代码的双位置分发，必须保持完全一致，改动请同时更新两份。
  */
 
 const fs = require("fs");
@@ -21,14 +21,16 @@ const { execSync, execFile: _execFile } = require("child_process");
 const https = require("https");
 const http = require("http");
 
-// 读取 .env（传具体路径时直接读该文件；否则优先 scripts/ 同目录，其次 skill 根目录）
+// 读取 .env（Key 放这里更安全，不会误传 GitHub）。
+// 传入路径时只读该文件；否则读本文件同目录 .env，
+// 若本文件位于 scripts/ 目录（skill 形态），额外回退到 skill 根目录 .env。
 function loadDotEnv(filePath) {
   const candidates = filePath
     ? [filePath]
     : [
-        path.join(__dirname, ".env"),              // scripts/ 下
-        path.join(path.dirname(__dirname), ".env"), // skill 根目录
-      ];
+        path.join(__dirname, ".env"),
+        path.basename(__dirname) === "scripts" ? path.join(path.dirname(__dirname), ".env") : null,
+      ].filter(Boolean);
   for (const fp of candidates) {
     if (!fs.existsSync(fp)) continue;
     const lines = fs.readFileSync(fp, "utf8").split(/\r?\n/);
