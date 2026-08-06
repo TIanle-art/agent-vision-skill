@@ -87,7 +87,7 @@ AI 会问你 API Key、要哪个模型，然后自动配好。
 
 ### 作为 Skill 安装（各 agent 通用）
 
-`skill/` 目录是标准 Agent Skill（Anthropic agent skills 规范）：`SKILL.md` + `vision.js`，Claude Code、opencode、Cline、Cursor 等支持 SKILL.md 的 agent 直接安装即可，装好后 AI 收到图片会自动识图，无需再拷 CLAUDE.md：
+`vision/` 目录是标准 Agent Skill（Anthropic agent skills 规范）：`SKILL.md` + `scripts/vision.js`，Claude Code、opencode、Cline、Cursor 等支持 SKILL.md 的 agent 直接安装即可，装好后 AI 收到图片会自动识图，无需再拷 CLAUDE.md：
 
 ```
 git clone https://github.com/TIanle-art/agent-vision-skill.git
@@ -95,10 +95,10 @@ git clone https://github.com/TIanle-art/agent-vision-skill.git
 
 | agent | 安装命令 |
 |-------|---------|
-| Claude Code | `mkdir -p ~/.claude/skills/vision && cp -r agent-vision-skill/skill/* ~/.claude/skills/vision/` |
-| opencode | `mkdir -p ~/.config/opencode/skills/vision && cp -r agent-vision-skill/skill/* ~/.config/opencode/skills/vision/` |
+| Claude Code | `mkdir -p ~/.claude/skills/vision && cp -r agent-vision-skill/vision/* ~/.claude/skills/vision/` |
+| opencode | `mkdir -p ~/.config/opencode/skills/vision && cp -r agent-vision-skill/vision/* ~/.config/opencode/skills/vision/` |
 | Cline | 兼容 Claude Code 路径（`~/.claude/skills/vision/`），或按你的 Cline 版本约定放置 |
-| 其他支持 SKILL.md 的 agent | 按其 skills 目录约定放置 `skill/` 内容 |
+| 其他支持 SKILL.md 的 agent | 按其 skills 目录约定放置 `vision/` 内容 |
 
 装完把 API Key 写进 skill 目录的 `.env`（复制 `.env.example`），之后直接发图片即可。**切换模型随时说一声**——"换增强视觉模型/换 plus"→ `qwen3-vl-plus`，"换回 flash"→ `qwen3-vl-flash`。
 
@@ -139,10 +139,17 @@ VISION_MODEL=qwen3-vl-flash
 
 | 文件 | 用途 |
 |------|------|
-| `vision.js` | 核心脚本，OpenAI 兼容格式（与 `skill/vision.js` 同步） |
+| `vision.js` | 核心脚本，OpenAI 兼容格式（与 `vision/scripts/vision.js` 同步） |
 | `CLAUDE.md` | 识图规则说明，让 AI 知道何时调用 vision.js（其他助手可转为 `.clinerules` 等格式） |
-| `skill/SKILL.md` + `skill/vision.js` | 标准 Agent Skill 形态，各支持 SKILL.md 的 agent 直接安装 |
+| `vision/SKILL.md` + `vision/scripts/vision.js` | 标准 Agent Skill 形态，各支持 SKILL.md 的 agent 直接安装 |
 | `.env.example` | 环境变量示例，复制为 `.env` 填 Key 即可 |
 | `test/` | 单元测试，`npm test` 运行 |
 
-> ⚠️ 安全提醒：`vision.js` 里填了真实的 API Key 后，**切勿把该文件提交到 GitHub**。更稳妥的做法：用 `.env` 文件存 Key（已被 gitignore）。完整说明见 [SECURITY.md](SECURITY.md)。
+---
+
+## 安全说明
+
+- **把 Key 放在 `.env` 文件里**（已被 `.gitignore` 忽略，不会提交进仓库），不要直接写进 `vision.js`。
+- **切勿**把填了真实 Key 的 `vision.js` 提交到 GitHub 或任何公开仓库。
+- 如果误提交，请立即到百炼控制台**吊销并重新生成**该 Key，而不是只删掉提交记录。
+- `vision.js` 不收集、不上传任何额外数据；网络图片通过 URL 直接传给服务商，请注意图片本身的隐私（截图、证件照、聊天记录等慎用第三方模型）。

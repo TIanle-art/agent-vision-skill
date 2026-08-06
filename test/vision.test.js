@@ -548,7 +548,7 @@ test("runWithConcurrency: 按并发上限执行、结果按输入顺序输出", 
   try {
     const log = mock.method(console, "log");
     try {
-      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`, { VISION_CONCURRENCY: 2 });
+      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`, { VISION_CONCURRENCY: 2, VISION_BATCH: "0", VISION_STREAM: "0" });
       const tasks = [1, 2, 3].map(i => ({
         label: `img${i}.png`,
         resolve: () => Promise.resolve(`http://x/img${i}.png`),
@@ -577,7 +577,7 @@ test("runWithConcurrency: 单图失败不中断其他，返回失败标记", asy
     const log = mock.method(console, "log");
     const err = mock.method(console, "error");
     try {
-      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`, { VISION_BATCH: "0", VISION_STREAM: "0" });
       const tasks = [
         { label: "missing.png", resolve: () => resolveLocalImage("/nonexistent/xyz.png") },
         { label: "b.png", resolve: () => Promise.resolve("data:image/png;base64,AAAA") },
@@ -603,7 +603,7 @@ test("runWithConcurrency: 单图直接输出文字，无分隔头", async () => 
   try {
     const log = mock.method(console, "log");
     try {
-      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`, { VISION_STREAM: "0" });
       const tasks = [{ label: "a.png", resolve: () => Promise.resolve("http://x/a.png") }];
       const failed = await mod.runWithConcurrency(tasks, 3, "q");
       assert.strictEqual(failed, false);
@@ -626,7 +626,7 @@ test("runWithConcurrency: --json 输出数组，单图也数组", async () => {
   try {
     const log = mock.method(console, "log");
     try {
-      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`, { VISION_STREAM: "0" });
       const tasks = [{ label: "a.png", resolve: () => Promise.resolve("http://x/a.png") }];
       const failed = await mod.runWithConcurrency(tasks, 3, "q", { json: true });
       assert.strictEqual(failed, false);
@@ -650,7 +650,7 @@ test("runWithConcurrency: --json 失败项带 error 字段", async () => {
   try {
     const log = mock.method(console, "log");
     try {
-      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`);
+      const mod = freshRequireWithBase(`http://127.0.0.1:${port}`, { VISION_BATCH: "0", VISION_STREAM: "0" });
       const tasks = [
         { label: "missing.png", resolve: () => resolveLocalImage("/nonexistent/xyz.png") },
         { label: "b.png", resolve: () => Promise.resolve("data:image/png;base64,AAAA") },
