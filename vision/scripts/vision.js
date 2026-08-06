@@ -218,6 +218,37 @@ function readImageDimensions(filePath) {
   return null;
 }
 
+// 检测可用的图片处理工具（sips → magick → convert），都没装就跳过
+function getImageProcessor() {
+  const candidates = [
+    {
+      name: "sips",
+      test: "which sips",
+      resize: (file, px, out) => `sips -Z ${px} "${file}" --out "${out}"`,
+      convertPng: (file, out) => `sips -s format jpeg "${file}" --out "${out}"`,
+    },
+    {
+      name: "magick",
+      test: "which magick",
+      resize: (file, px, out) => `magick "${file}" -resize ${px}x${px} "${out}"`,
+      convertPng: (file, out) => `magick "${file}" "${out}"`,
+    },
+    {
+      name: "convert",
+      test: "which convert",
+      resize: (file, px, out) => `convert "${file}" -resize ${px}x${px} "${out}"`,
+      convertPng: (file, out) => `convert "${file}" "${out}"`,
+    },
+  ];
+  for (const c of candidates) {
+    try {
+      execSync(c.test, { stdio: "pipe", timeout: 5000 });
+      return c;
+    } catch {}
+  }
+  return null;
+}
+
 // 同步执行 sips 命令。虽然阻塞事件循环，但 sips 通常在数百 ms 内完成，且 resolveLocalImage
 // 作为同步函数链的一部分，改为异步会需要重构整个调用链。对单图/少量图片影响可忽略。
 function autoResizeImage(filePath, targetPx = AUTO_RESIZE_PX) {
@@ -227,14 +258,18 @@ function autoResizeImage(filePath, targetPx = AUTO_RESIZE_PX) {
   if (Math.max(dim.width, dim.height) <= targetPx) return filePath; // 已足够小
   const ext = path.extname(filePath).toLowerCase().replace(".", "");
   const tmpPath = path.join(os.tmpdir(), `vision-resize-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`);
+  const processor = getImageProcessor();
+  if (!processor) {
+    if (process.platform !== "darwin") {
+      console.error("[提示] 未检测到图片处理工具（sips/magick/convert），跳过自动缩放。安装 ImageMagick 后可启用。");
+    }
+    return filePath;
+  }
   try {
-    execSync(`sips -Z ${targetPx} "${filePath}" --out "${tmpPath}"`, { stdio: "pipe", timeout: 15000 });
+    execSync(processor.resize(filePath, targetPx, tmpPath), { stdio: "pipe", timeout: 15000 });
     return tmpPath;
   } catch (e) {
-    // sips 不可用（非 macOS 或格式不支持），静默跳过继续用原图
-    if (process.platform === "darwin") {
-      console.error(`[提示] 图片缩放失败（${e.message.slice(0, 40)}），将使用原图。`);
-    }
+    console.error(`[提示] 图片缩放失败（${e.message.slice(0, 40)}），将使用原图。`);
     try { fs.unlinkSync(tmpPath); } catch {}
     return filePath;
   }
@@ -245,8 +280,15 @@ function autoConvertPng(filePath) {
   const ext = path.extname(filePath).toLowerCase().replace(".", "");
   if (ext !== "png") return filePath;
   const tmpPath = path.join(os.tmpdir(), `vision-convert-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
+  const processor = getImageProcessor();
+  if (!processor) {
+    if (process.platform !== "darwin") {
+      console.error("[提示] 未检测到图片处理工具（sips/magick/convert），跳过 PNG→JPEG 转码。安装 ImageMagick 后可启用。");
+    }
+    return filePath;
+  }
   try {
-    execSync(`sips -s format jpeg "${filePath}" --out "${tmpPath}"`, { stdio: "pipe", timeout: 15000 });
+    execSync(processor.convertPng(filePath, tmpPath), { stdio: "pipe", timeout: 15000 });
     const origSize = fs.statSync(filePath).size;
     const newSize = fs.statSync(tmpPath).size;
     const ratio = ((origSize - newSize) / origSize * 100).toFixed(0);
@@ -257,9 +299,7 @@ function autoConvertPng(filePath) {
     console.error(`[提示] PNG→JPEG 转码: ${(origSize/1024).toFixed(0)}KB → ${(newSize/1024).toFixed(0)}KB (缩减 ${ratio}%)`);
     return tmpPath;
   } catch (e) {
-    if (process.platform === "darwin") {
-      console.error(`[提示] PNG 转 JPEG 失败（${e.message.slice(0, 40)}），将使用原图。`);
-    }
+    console.error(`[提示] PNG 转 JPEG 失败（${e.message.slice(0, 40)}），将使用原图。`);
     try { fs.unlinkSync(tmpPath); } catch {}
     return filePath;
   }
@@ -364,6 +404,15 @@ function checkRemoteSize(urlStr, maxBytes = MAX_IMAGE_MB * 1024 * 1024) {
   });
 }
 
+// 检测 sqlite3 命令是否可用，不可用返回 null
+function getSqliteCommand() {
+  try {
+    execSync("which sqlite3", { stdio: "pipe", timeout: 5000 });
+    return "sqlite3";
+  } catch {}
+  return null;
+}
+
 // 定位"消息里没有路径"的粘贴图片（openCode 等 agent 把粘贴图以 base64 存进 SQLite 数据库，
 // 而不是写成临时文件；消息里只有 [Image N] 占位）。从已知位置取最新附件，解码为临时文件。
 // 返回 { file, source } 或 null。可注入 dbPath/tmpDir 便于测试。
@@ -372,6 +421,13 @@ function locateAttachment(opts = {}) {
   const dbPath = opts.dbPath || path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
   const tmpDir = opts.tmpDir || os.tmpdir();
   if (!fs.existsSync(dbPath)) return null;
+  const sqlCmd = getSqliteCommand();
+  if (!sqlCmd) {
+    console.error("[提示] 未安装 sqlite3 命令行工具，无法从 opencode 数据库定位粘贴图片。");
+    console.error("macOS: brew install sqlite3");
+    console.error("Ubuntu/Debian: sudo apt install sqlite3");
+    return null;
+  }
   const sessionFilter = process.env.VISION_OPENCODE_SESSION
     ? ` AND session_id='${process.env.VISION_OPENCODE_SESSION.replace(/'/g, "''")}'`
     : "";
@@ -383,7 +439,7 @@ function locateAttachment(opts = {}) {
   let rowText = null;
   try {
     // SQL 走 stdin，避免 shell 引号转义；结果默认以 | 分隔（单列单行时就是原 JSON）
-    rowText = execSync(`sqlite3 "${dbPath}" -noheader`, {
+    rowText = execSync(`${sqlCmd} "${dbPath}" -noheader`, {
       input: sql,
       encoding: "utf8",
       timeout: 10000,
@@ -817,8 +873,14 @@ function main() {
     }
     // 用 exitCode 而非 process.exit()：后者会截断 stdout 管道输出（大 JSON 可能被切掉）
     process.exitCode = failed ? 1 : 0;
-  })();
+  })().catch((e) => {
+    console.error("未预期的错误:", e.message || e);
+    for (const f of locateTempFiles) {
+      try { fs.unlinkSync(f); } catch {}
+    }
+    process.exitCode = 1;
+  });
 }
 
 if (require.main === module) main();
-module.exports = { parseArgs, exceedsImageLimit, isImagePath, readImageDimensions, resolveLocalImage, loadDotEnv, checkRemoteSize, request, runWithConcurrency, describeBatch, autoResizeImage, hintForStatus, isRetryableError, dedupKey, locateAttachment };
+module.exports = { parseArgs, exceedsImageLimit, isImagePath, readImageDimensions, resolveLocalImage, loadDotEnv, checkRemoteSize, request, runWithConcurrency, describeBatch, autoResizeImage, autoConvertPng, getImageProcessor, hintForStatus, isRetryableError, dedupKey, locateAttachment, getSqliteCommand };

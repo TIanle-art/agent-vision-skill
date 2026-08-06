@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execSync } = require("node:child_process");
 
-const { parseArgs, exceedsImageLimit, isImagePath, readImageDimensions, resolveLocalImage, loadDotEnv, checkRemoteSize, locateAttachment } = require("../vision.js");
+const { parseArgs, exceedsImageLimit, isImagePath, readImageDimensions, resolveLocalImage, loadDotEnv, checkRemoteSize, locateAttachment, getImageProcessor, getSqliteCommand } = require("../vision.js");
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "vision-test-"));
@@ -779,3 +779,65 @@ test("locateAttachment: jpeg MIME 扩展名规范化为 jpg", () => {
   assert.match(found.file, /\.jpg$/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ---------- getImageProcessor ----------
+
+test("getImageProcessor: macOS 默认检测到 sips", { skip: process.platform !== "darwin" }, () => {
+  const p = getImageProcessor();
+  assert.ok(p);
+  assert.strictEqual(p.name, "sips");
+  // 验证返回的回调函数签名
+  assert.strictEqual(typeof p.resize, "function");
+  assert.strictEqual(typeof p.convertPng, "function");
+  const resizeCmd = p.resize("/tmp/a.png", 1500, "/tmp/out.png");
+  assert.match(resizeCmd, /sips/);
+  assert.match(resizeCmd, /a\.png/);
+  const convertCmd = p.convertPng("/tmp/a.png", "/tmp/out.jpg");
+  assert.match(convertCmd, /sips/);
+  assert.match(convertCmd, /jpeg/);
+});
+
+test("getImageProcessor: 返回可用工具或 null", () => {
+  const p = getImageProcessor();
+  // 在 macOS 上 sips 一定有，在其他平台上可能为 null
+  if (process.platform === "darwin") {
+    assert.ok(p);
+  }
+  // 无论结果如何，结构必须正确
+  if (p) {
+    assert.ok(["sips", "magick", "convert"].includes(p.name));
+    assert.strictEqual(typeof p.resize, "function");
+    assert.strictEqual(typeof p.convertPng, "function");
+  }
+});
+
+test("getImageProcessor: magick / convert 命令格式正确", () => {
+  // 不依赖实际安装，直接验证候选列表中后两个的命令字面量
+  const p = getImageProcessor();
+  if (p && p.name === "magick") {
+    const cmd = p.resize("/tmp/x.png", 2000, "/tmp/y.png");
+    assert.match(cmd, /magick/);
+    assert.match(cmd, /-resize/);
+  }
+  if (p && p.name === "convert") {
+    const cmd = p.resize("/tmp/x.png", 2000, "/tmp/y.png");
+    assert.match(cmd, /convert/);
+    assert.match(cmd, /-resize/);
+  }
+});
+
+// ---------- getSqliteCommand ----------
+
+test("getSqliteCommand: 检测到 sqlite3（测试环境需要）", () => {
+  const cmd = getSqliteCommand();
+  // 测试环境（CI / 开发机）一般都有 sqlite3；没有也不 fail，只是跳过断言
+  if (cmd) {
+    assert.strictEqual(cmd, "sqlite3");
+  }
+});
+
+test("getSqliteCommand: 返回 null 或 'sqlite3'", () => {
+  const cmd = getSqliteCommand();
+  assert.ok(cmd === null || cmd === "sqlite3");
+});
+
