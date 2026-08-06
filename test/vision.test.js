@@ -3,8 +3,9 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { execSync } = require("node:child_process");
 
-const { parseArgs, exceedsImageLimit, isImagePath, readImageDimensions, resolveLocalImage, loadDotEnv, checkRemoteSize } = require("../vision.js");
+const { parseArgs, exceedsImageLimit, isImagePath, readImageDimensions, resolveLocalImage, loadDotEnv, checkRemoteSize, locateAttachment } = require("../vision.js");
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "vision-test-"));
@@ -84,6 +85,21 @@ test("parseArgs: --json 开关", () => {
   const r = parseArgs(["a.png", "--json"]);
   assert.strictEqual(r.json, true);
   assert.deepStrictEqual(r.images, ["a.png"]);
+});
+
+test("parseArgs: --locate 开关", () => {
+  const r = parseArgs(["--locate", "描述这张图"]);
+  assert.strictEqual(r.locate, true);
+  assert.strictEqual(r.prompt, "描述这张图");
+});
+
+test("parseArgs: -l 简写", () => {
+  const r = parseArgs(["-l"]);
+  assert.strictEqual(r.locate, true);
+});
+
+test("parseArgs: 默认 locate 为 false", () => {
+  assert.strictEqual(parseArgs(["a.png"]).locate, false);
 });
 
 test("parseArgs: --json 与 URL 混用", () => {
@@ -668,4 +684,98 @@ test("runWithConcurrency: --json 失败项带 error 字段", async () => {
   } finally {
     server.close();
   }
+});
+
+// ---------- locateAttachment ----------
+
+function makeOpencodeDb(dir, rows) {
+  const dbPath = path.join(dir, "opencode.db");
+  const fn = path.join(dir, "mkdb.sql");
+  fs.writeFileSync(fn, [
+    "CREATE TABLE part (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);",
+    ...rows.map(r => `INSERT INTO part VALUES ${r};`),
+    "",
+  ].join("\n"));
+  execSync(`sqlite3 "${dbPath}" < "${fn}"`, { stdio: "pipe" });
+  return dbPath;
+}
+
+const PNG_1PX = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+
+test("locateAttachment: 数据库不存在返回 null", () => {
+  const dir = tempDir();
+  assert.strictEqual(locateAttachment({ dbPath: path.join(dir, "none.db"), tmpDir: dir }), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("locateAttachment: 无图片附件返回 null", () => {
+  const dir = tempDir();
+  const dbPath = makeOpencodeDb(dir, [`('p1','s1',1,'{"type":"tool","tool":"bash"}')`]);
+  assert.strictEqual(locateAttachment({ dbPath, tmpDir: dir }), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("locateAttachment: 取最新图片附件并解码", () => {
+  const dir = tempDir();
+  const b64 = PNG_1PX.toString("base64");
+  const dbPath = makeOpencodeDb(dir, [
+    `('p1','s1',100,'{"type":"file","mime":"image/png","filename":"clipboard","url":"data:image/png;base64,${b64}"}')`,
+    `('p2','s2',200,'{"type":"file","mime":"image/png","filename":"clipboard","url":"data:image/png;base64,${b64}"}')`,
+  ]);
+  const found = locateAttachment({ dbPath, tmpDir: dir });
+  assert.ok(found);
+  assert.match(found.source, /opencode/);
+  const bytes = fs.readFileSync(found.file);
+  assert.deepStrictEqual(bytes, PNG_1PX);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("locateAttachment: VISION_OPENCODE_SESSION 限定会话", () => {
+  const dir = tempDir();
+  const b64 = PNG_1PX.toString("base64");
+  const dbPath = makeOpencodeDb(dir, [
+    `('p1','ses_a',300,'{"type":"file","mime":"image/png","filename":"clipboard","url":"data:image/png;base64,${b64}"}')`,
+    `('p2','ses_b',400,'{"type":"file","mime":"image/jpeg","filename":"clipboard","url":"data:image/jpeg;base64,${b64}"}')`,
+  ]);
+  const prev = process.env.VISION_OPENCODE_SESSION;
+  process.env.VISION_OPENCODE_SESSION = "ses_a";
+  try {
+    const found = locateAttachment({ dbPath, tmpDir: dir });
+    assert.ok(found);
+    assert.match(found.file, /\.png$/);
+  } finally {
+    if (prev === undefined) delete process.env.VISION_OPENCODE_SESSION;
+    else process.env.VISION_OPENCODE_SESSION = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("locateAttachment: 损坏的 JSON 数据返回 null", () => {
+  const dir = tempDir();
+  const dbPath = makeOpencodeDb(dir, [
+    `('p1','s1',100,'this is not json')`,
+  ]);
+  assert.strictEqual(locateAttachment({ dbPath, tmpDir: dir }), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("locateAttachment: url 字段不是 data URI 返回 null", () => {
+  const dir = tempDir();
+  const dbPath = makeOpencodeDb(dir, [
+    `('p1','s1',100,'{"type":"file","mime":"image/png","filename":"clipboard","url":"https://example.com/img.png"}')`,
+  ]);
+  assert.strictEqual(locateAttachment({ dbPath, tmpDir: dir }), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("locateAttachment: jpeg MIME 扩展名规范化为 jpg", () => {
+  const dir = tempDir();
+  const b64 = PNG_1PX.toString("base64");
+  const dbPath = makeOpencodeDb(dir, [
+    `('p1','s1',100,'{"type":"file","mime":"image/jpeg","filename":"clipboard","url":"data:image/jpeg;base64,${b64}"}')`,
+  ]);
+  const found = locateAttachment({ dbPath, tmpDir: dir });
+  assert.ok(found);
+  assert.match(found.file, /\.jpg$/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

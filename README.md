@@ -125,6 +125,22 @@ VISION_MODEL=qwen3-vl-flash
 | `.env.example` | 环境变量示例，复制为 `.env` 填 Key 即可 |
 | `test/` | 单元测试，`npm test` 运行 |
 
+### 粘贴图路径未知时（opencode 等）
+
+某些 agent（如 opencode）粘贴图片时不生成临时文件，而是把图片以 base64 存进本地 SQLite 数据库（`~/.local/share/opencode/opencode.db`），消息中只留下 `[Image N]` 占位，无文件路径可用。此时可用 `--locate` 让脚本自动从数据库恢复最新粘贴图：
+
+```
+node vision.js --locate "描述这张图片"
+```
+
+脚本会查询数据库的 `part` 表，解码最新图片附件到临时文件并直接识别。并发多会话时，可设置环境变量限定会话避免取错图：
+
+```
+VISION_OPENCODE_SESSION=<session_id> node vision.js --locate "描述这张图片"
+```
+
+> 注意：`--locate` 仅在没有给出图片路径时生效；如果同时传了图片路径，`--locate` 会被忽略。
+
 ---
 
 ## 安全说明

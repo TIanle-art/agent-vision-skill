@@ -96,6 +96,24 @@ DASHSCOPE_API_KEY=sk-xxx
 - `不支持 GIF 动图`：gif 需先转 jpg/png（macOS 可用 `sips -s format jpeg <图片> --out <新文件>.jpg`，Windows 用图片工具转存）
 - 失败会自动重试（429/5xx/超时，最多 2 次）
 
+## 粘贴图路径未知时（消息里只有 [Image N]，无文件路径）
+
+部分 agent（如 opencode）粘贴图片时不写临时文件，而是把 base64 存进本地 SQLite 数据库（opencode: `~/.local/share/opencode/opencode.db` 的 `part` 表），消息里只有 `[Image N]` 占位。**不要**按临时目录"最新文件"猜路径（`clipboard_image.png` 之类可能是旧会话残留，会读错图）。直接让脚本自动定位：
+
+```
+node vision.js --locate "用中文描述这张图片"
+```
+
+`--locate` 会从已知存储位置（当前支持 opencode 数据库）恢复最新图片附件、解码并直接识别；找不到时报错提示手动传路径。
+
+多会话并发怕取错图时，可用环境变量限定会话（当前会话 ID 可通过查询自己的工具调用记录得到：`SELECT DISTINCT session_id FROM part WHERE data LIKE '%<自己的工具名>%' ORDER BY time_created DESC LIMIT 1;`）：
+
+```
+VISION_OPENCODE_SESSION=<会话ID> node vision.js --locate "用中文描述这张图片"
+```
+
+识别结果明显与用户描述的图不符时，先查数据库而不是再猜路径。
+
 ## 配置好之后
 
 用户直接发图片，自动识图，无需手动打命令。

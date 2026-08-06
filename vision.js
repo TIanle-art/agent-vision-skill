@@ -88,7 +88,8 @@ const HELP = `用法:
   node vision.js <图片路径> [问题]
   node vision.js a.jpg b.jpg [问题]      # 多图逐张识别
   node vision.js <图片链接> [问题]       # 网络图片（URL 自动识别，可多个）
-  node vision.js --url <图片链接> [问题] # 网络图片（显式指定，可重复）
+  node vision.js --url <图片链接> [问题]  # 网络图片（显式指定，可重复）
+  node vision.js --locate [问题]         # 无路径时从已知存储位置自动恢复粘贴图（opencode 等）
   node vision.js --help
 
 参数:
@@ -96,6 +97,8 @@ const HELP = `用法:
   <链接>       网络图片 URL（含 :// 自动识别，可多个；也可用 --url 显式指定）
   [问题]       要问的问题，多个词自动拼接（默认: ${DEFAULT_PROMPT}）
   --url <链接> 网络图片链接，可重复使用
+  -l, --locate 消息里没有图片路径时，从已知存储位置（如 opencode 数据库）恢复最新粘贴图片并识别；
+               找不到时提示手动传路径。可用环境变量 VISION_OPENCODE_SESSION 限定会话
   -p, --prompt <文字>  指定问题（可多次，与普通词一起按出现顺序拼接）
   --json       以 JSON 数组输出结果（每张图一个对象: {ok,label,text|error}，供程序解析）
   -h, --help   显示本帮助
@@ -114,6 +117,7 @@ const HELP = `用法:
   VISION_AUTO_RESIZE_PX  自动缩放最长边到指定像素（默认 0 不缩放；如 1500，macOS sips 下生效）
   VISION_CONVERT_PNG     PNG 自动转 JPEG 省 token（默认 0；设 1 或 true 启用，macOS sips 下生效）
   VISION_STREAM          SSE 流式输出逐字显示（默认开 1/true；设 0 或 false 关闭）
+  VISION_OPENCODE_SESSION  --locate 时限定 opencode 会话 ID（默认取最新附件；并发多会话时用）
 
 限制说明（以服务端为准，本地提前拦截并提示压缩）:
   gif 动图不支持；分辨率 4K(3840px) 以上仅支持 jpg/jpeg/png；
@@ -139,6 +143,7 @@ function parseArgs(argv) {
   const urls = [];
   let prompt = "";
   let json = false;
+  let locate = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") return { help: true };
@@ -149,6 +154,8 @@ function parseArgs(argv) {
       if (!v || v.startsWith("-")) throw new Error("--url 后面需要跟图片链接");
       if (!v.includes("://")) throw new Error(`--url 需要完整的网络图片链接（含 http:// 或 https://）: ${v}`);
       urls.push(v);
+    } else if (a === "--locate" || a === "-l") {
+      locate = true;
     } else if (a === "--prompt" || a === "-p") {
       const v = argv[++i];
       if (!v) throw new Error("--prompt 后面需要跟问题文字");
@@ -164,7 +171,7 @@ function parseArgs(argv) {
     }
   }
   if (!prompt) prompt = DEFAULT_PROMPT;
-  return { images, urls, prompt, json };
+  return { images, urls, prompt, json, locate };
 }
 
 function exceedsImageLimit(parsed, max = MAX_IMAGES) {
@@ -355,6 +362,45 @@ function checkRemoteSize(urlStr, maxBytes = MAX_IMAGE_MB * 1024 * 1024) {
     };
     probe(urlStr);
   });
+}
+
+// 定位"消息里没有路径"的粘贴图片（openCode 等 agent 把粘贴图以 base64 存进 SQLite 数据库，
+// 而不是写成临时文件；消息里只有 [Image N] 占位）。从已知位置取最新附件，解码为临时文件。
+// 返回 { file, source } 或 null。可注入 dbPath/tmpDir 便于测试。
+// 环境变量 VISION_OPENCODE_SESSION 可限定会话（并发多会话时避免取错图）。
+function locateAttachment(opts = {}) {
+  const dbPath = opts.dbPath || path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
+  const tmpDir = opts.tmpDir || os.tmpdir();
+  if (!fs.existsSync(dbPath)) return null;
+  const sessionFilter = process.env.VISION_OPENCODE_SESSION
+    ? ` AND session_id='${process.env.VISION_OPENCODE_SESSION}'`
+    : "";
+  // 锚定 JSON 开头，避免误匹配工具输出里也含 "type":"file" 的记录
+  const sql =
+    "SELECT data FROM part WHERE data LIKE '{\"type\":\"file\",\"mime\":\"image/%'" +
+    sessionFilter +
+    " ORDER BY time_created DESC LIMIT 1;";
+  let rowText = null;
+  try {
+    // SQL 走 stdin，避免 shell 引号转义；结果默认以 | 分隔（单列单行时就是原 JSON）
+    rowText = execSync(`sqlite3 "${dbPath}" -noheader`, {
+      input: sql,
+      encoding: "utf8",
+      timeout: 10000,
+    }).trim();
+  } catch (e) {
+    console.error(`[提示] 读取 opencode 数据库失败（${path.basename(dbPath)}）: ${e.message.slice(0, 80)}`);
+    return null;
+  }
+  if (!rowText) return null;
+  let row;
+  try { row = JSON.parse(rowText); } catch { return null; }
+  const m = String(row.url || "").match(/^data:image\/([a-z][a-z0-9.+-]*);base64,(.+)$/);
+  if (!m) return null;
+  const ext = m[1] === "jpeg" ? "jpg" : m[1];
+  const file = path.join(tmpDir, `opencode-pasted-${Date.now()}.${ext}`);
+  fs.writeFileSync(file, Buffer.from(m[2], "base64"));
+  return { file, source: `opencode 数据库 (${path.basename(dbPath)})` };
 }
 
 function extractApiError(raw) {
@@ -728,12 +774,27 @@ function main() {
     console.error("模型名未配置或为占位符，请检查 vision.js 顶部的 MODEL 配置。");
     process.exit(1);
   }
+  let locateTempFiles = []; // --locate 产生的临时文件，处理完需清理
   if (parsed.images.length + parsed.urls.length === 0) {
-    console.error("用法: node vision.js <图片路径> [问题]");
-    console.error("      node vision.js a.jpg b.jpg [问题]   # 多图");
-    console.error("      node vision.js --url <图片链接> [问题]");
-    console.error("      node vision.js --help");
-    process.exit(1);
+    // 无路径时尝试自动定位粘贴图（opencode 数据库等）；失败再报用法
+    if (parsed.locate) {
+      const found = locateAttachment();
+      if (!found) {
+        console.error("--locate 未能定位到粘贴图片（未找到 opencode 数据库或其中没有图片附件）。");
+        console.error("请提供图片路径，或用 --url 传图片链接。");
+        process.exit(1);
+      }
+      console.error(`[定位] 从 ${found.source} 恢复粘贴图片 → ${found.file}`);
+      locateTempFiles.push(found.file);
+      parsed.images.push(found.file);
+    } else {
+      console.error("用法: node vision.js <图片路径> [问题]");
+      console.error("      node vision.js a.jpg b.jpg [问题]   # 多图");
+      console.error("      node vision.js --url <图片链接> [问题]");
+      console.error("      node vision.js --locate [问题]      # 从粘贴位置自动恢复（opencode）");
+      console.error("      node vision.js --help");
+      process.exit(1);
+    }
   }
   if (exceedsImageLimit(parsed)) {
     console.error(`图片数量 ${parsed.images.length + parsed.urls.length} 张超过上限 ${MAX_IMAGES} 张，请分批识别。`);
@@ -750,10 +811,14 @@ function main() {
 
   (async () => {
     const failed = await runWithConcurrency(tasks, CONCURRENCY, parsed.prompt, { json: parsed.json });
+    // 清理 --locate 产生的临时文件
+    for (const f of locateTempFiles) {
+      try { fs.unlinkSync(f); } catch {}
+    }
     // 用 exitCode 而非 process.exit()：后者会截断 stdout 管道输出（大 JSON 可能被切掉）
     process.exitCode = failed ? 1 : 0;
   })();
 }
 
 if (require.main === module) main();
-module.exports = { parseArgs, exceedsImageLimit, isImagePath, readImageDimensions, resolveLocalImage, loadDotEnv, checkRemoteSize, request, runWithConcurrency, describeBatch, autoResizeImage, hintForStatus, isRetryableError, dedupKey };
+module.exports = { parseArgs, exceedsImageLimit, isImagePath, readImageDimensions, resolveLocalImage, loadDotEnv, checkRemoteSize, request, runWithConcurrency, describeBatch, autoResizeImage, hintForStatus, isRetryableError, dedupKey, locateAttachment };
