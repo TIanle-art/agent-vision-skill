@@ -5,13 +5,11 @@ description: Send images to a vision model for text description when the base LL
 
 # 识图能力
 
-底层模型不具备原生识图能力时，遇到图片**不要用 Read 工具**，改用本 skill 目录下的 `vision.js`：
+底层模型不具备原生识图能力。遇到图片时，**不要用 Read 工具**，改用本项目脚本 vision.js：
 
 ```
 node "scripts/vision.js" "<图片路径>" "用中文描述这张图片"
 ```
-
-每个 agent 调用 skill 时工作目录即为 skill 根目录，所以 `scripts/vision.js` 相对路径即可。
 
 ## 触发场景
 
@@ -43,11 +41,11 @@ node "scripts/vision.js" "https://example.com/a.png" "用中文描述这张图�
 用户说"换回 flash"时：改回 `qwen3-vl-flash`。
 用户指定其他模型名时，按其要求填写。
 
-改哪里：先看 `scripts/vision.js` 同目录（即 skill 根目录）有没有 `.env` 文件——有就改 `.env` 里的 `VISION_MODEL`（环境变量优先级高于代码），没有 `.env` 才改 `scripts/vision.js` 顶部模型配置区的 `MODEL`。
+改哪里：先看 vision.js 同目录有没有 `.env` 文件——有就改 `.env` 里的 `VISION_MODEL`（环境变量优先级高于代码），没有 `.env` 才改 vision.js 顶部模型配置区的 `MODEL`。（skill 安装形态下 `.env` 放在 skill 根目录，同样优先改它）
 
 ## 配置
 
-第一次使用前，把 API Key 写入 skill 根目录的 `.env`（参考 skill 根目录的 `.env.example`）：
+第一次使用前，把 `.env.example` 复制为 `.env`（放在 vision.js 同目录；skill 安装形态放 skill 根目录）并填入 API Key：
 
 ```
 DASHSCOPE_API_KEY=sk-xxx
@@ -64,3 +62,11 @@ DASHSCOPE_API_KEY=sk-xxx
 - `图片分辨率过大`：超过 8K（macOS 可用 `sips -Z 7680 <图片> --out <新文件>` 压缩，Windows 用画图/图片工具缩放）
 - `不支持 GIF 动图`：gif 需先转 jpg/png（macOS 可用 `sips -s format jpeg <图片> --out <新文件>.jpg`，Windows 用图片工具转存）
 - 失败会自动重试（429/5xx/超时，最多 2 次）
+
+## 配置好之后
+
+用户直接发图片，自动识图，无需手动打命令。
+
+## 本文件是什么
+
+本段是识图规则（正文与 `vision/SKILL.md` 一致，改任一份需同步）。拷贝形态下，把本段随 vision.js 一起拷入用户项目——主流 agent（Claude Code / Codex / opencode / Cursor）直接读 `AGENTS.md` 无需改名；Claude Code 也可用 `CLAUDE.md`，Cline 用 `.clinerules`。

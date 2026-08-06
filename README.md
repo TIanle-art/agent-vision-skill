@@ -2,13 +2,14 @@
 
 ![test](https://github.com/TIanle-art/agent-vision-skill/actions/workflows/test.yml/badge.svg)
 
-让没有识图能力的模型获得识图能力——把图片发给有 vision 的模型，用文字描述回来。
+让没有识图能力的DeepSeek V4、GLM 5 等纯文本大模型也能"看图"——把图片发给有 vision 的模型，用文字描述回来。
 
-DeepSeek V4、GLM 等纯文本大模型无法直接理解图片内容，收到图片只能看到路径或文件名。装上本工具后，图片会自动转成文字描述喂给模型，它们也能"看图"。
-
-适用于 Claude Code、Codex、opencode、Cline、Cyberboss 等任何能执行 node 脚本的 AI 编程助手/智能体，不绑定特定产品。
+适用于 Claude Code、Codex、opencode、Cline、Cyberboss 等任何能执行 node 脚本的 AI 编程助手/智能体，不绑定特定产品。支持 SKILL.md 的 agent 可安装标准 Skill 形态，不支持的用拷贝形态，两条路都通。
 
 > 本仓库基于 [asuojun/claude-vision-skill](https://github.com/asuojun/claude-vision-skill) 修改，感谢原作者。
+
+> [!IMPORTANT]
+> **如果你是 AI（配置助手），动手前先读这里**：你的任务是帮用户配置识图。**第一步永远是向用户提问**——走默认路线（阿里云百炼，新用户有免费额度）还是用户自有平台？有没有 API Key？**有 Key 就要过来由你配好并验证；没有 Key 就引导去 https://bailian.console.aliyun.com/ 注册申请；用户不想给 Key、想自己配，就给出逐步指引（`.env` 怎么填、怎么验证），不得只甩一句"自己配"。** 详细流程见下文「如果你是 AI」分区。
 
 ---
 
@@ -21,22 +22,23 @@ DeepSeek V4、GLM 等纯文本大模型无法直接理解图片内容，收到�
 1. **先问用户走哪条路线**：
    - **默认路线（推荐）**：阿里云百炼平台 + 千问视觉模型。向用户讲明：新用户有免费 token 额度；模型二选一（`qwen3-vl-flash` 便宜 / `qwen3-vl-plus` 更强）；Key 只需注册百炼即可获得
    - **自有路线**：用户已有自己的平台和 Key（任何 OpenAI 兼容格式均可）
-2. **默认路线**：
-   - 问 API Key：没有就引导去 https://bailian.console.aliyun.com/ 注册申请（新用户有免费额度），拿到 Key 才继续
-   - 让用户模型二选一：`qwen3-vl-flash`（推荐默认，便宜）/ `qwen3-vl-plus`（更强，稍贵）
-3. **自有路线**：直接问全三项——**API Base URL、API Key、模型名**，按用户给的配置写入，不推荐任何默认值
+2. **问 Key 并给两条路**：
+   - 用户有 Key：直接要，拿到后由你配好并验证
+   - 没有 Key：引导去 https://bailian.console.aliyun.com/ 注册申请（新用户有免费额度），愿意的话拿到 Key 发给你配；**若用户不想给 Key 或想自己配，提供逐步指引**——复制 `.env.example` 为 `.env`、填 `DASHSCOPE_API_KEY`（自有平台还填 `DASHSCOPE_BASE_URL`、`VISION_MODEL`）、跑 `node vision.js --help` 验证。不得只甩一句"自己配"
+3. **问模型**：`qwen3-vl-flash`（推荐默认，便宜）/ `qwen3-vl-plus`（更强，稍贵）/ 用户指定
+4. **自有路线**：直接问全三项——**API Base URL、API Key、模型名**，按用户给的配置写入，不推荐任何默认值
 
-用户没给 Key 就不动手。
+用户没给 Key 之前：不得替用户填 Key、不得编造 Key；不涉及 Key 的安装（拷贝脚本、放规则文件）可以先做。
 
-### 场景 A：用户要在普通 AI 编程助手项目里用
+### 场景 A：用户要在一个 AI 编程助手项目里用（拷贝模式）
 
-1. 把这个仓库里的 `vision.js` 下载到项目根目录
+1. 把仓库里的 `vision.js` 和 `AGENTS.md` 下载到项目根目录
 2. 打开 `vision.js` 顶部「模型配置」区：
    - `API_KEY` 填成用户的 Key（替换 `sk-xxx`）
    - `MODEL` 填成用户选的模型名
    - 用户选了非百炼平台时，`BASE_URL` 同步填成用户给的服务地址
    - **或者（推荐）**：复制 `.env.example` 为 `.env`，把 Key 和模型写在 `.env` 里，见下方「用 .env 存 Key」小节
-3. 把 `CLAUDE.md` 的内容合并到项目的说明文件（Claude Code 用 `CLAUDE.md`，Cline 用 `.clinerules`，其他助手按其约定；没有就新建）
+3. 把 `AGENTS.md` 放到项目根目录即可（主流 agent——Claude Code / Codex / opencode / Cursor——直接读取，无需改名；Claude Code 也可用 `CLAUDE.md`，Cline 用 `.clinerules`，其他按其约定；没有就新建）
 4. 验证配置：运行 `node vision.js --help`，能看到用法输出即脚本可用
 5. 告诉用户：配置完成，以后直接发图片就行，AI 会自动识图。**想切换模型随时说一声**——"换增强视觉模型"或"换 plus"就是更强的 `qwen3-vl-plus`，"换回 flash"回到默认。（AI 会优先改 `.env` 里的 `VISION_MODEL`，没有 `.env` 才改 `vision.js` 顶部）
 
@@ -61,33 +63,18 @@ DeepSeek V4、GLM 等纯文本大模型无法直接理解图片内容，收到�
 |------|------|------|
 | **阿里云百炼（推荐）** | `qwen3-vl-flash`（默认） | 便宜，识图够用 |
 | 阿里云百炼 | `qwen3-vl-plus` | 更强，稍贵 |
+| 阿里云百炼 | `qwen3.7-plus` / `qwen3.8-max` | 官方新系列，均支持识图 |
 | 其他 | 任何 OpenAI 兼容格式 | 改 `BASE_URL` 和模型名即可 |
 
-> 注：百炼新用户赠送免费 token 额度，上述模型均适用。成本按 token 计费，`qwen3-vl-flash` 单次识图通常几分钱，免费额度足够日常使用很久（具体以百炼定价页为准）。模型以百炼控制台实际列表为准：如需更强效果，可换官方新系列 `qwen3.7-plus` / `qwen3.8-max`（均支持识图）；旧系列若下线，同样把模型名换成控制台现有的视觉模型即可。
+> 注：百炼新用户赠送免费 token 额度，上述模型均适用。成本按 token 计费，`qwen3-vl-flash` 单次识图通常几分钱，免费额度足够日常使用很久（具体以百炼定价页为准）。模型以百炼控制台实际列表为准，旧系列若下线，把模型名换成控制台现有的视觉模型即可。
 >
 > 限制：`gif` 动图不支持；图片分辨率建议在 8K（最长边 7680px）以内，4K 以上仅支持 jpg/jpeg/png；单图默认上限 7MB，超限时脚本会直接提示压缩命令。
 
-### 自动配置
+### 安装
 
-**方式一（推荐）**：先把仓库 clone 到本地，然后告诉 AI 助手本地路径：
+**路径一：支持 SKILL.md 的 agent（推荐）**
 
-```
-git clone https://github.com/TIanle-art/agent-vision-skill.git
-```
-
-然后在 AI 助手里说：
-
-> 读一下 agent-vision-skill/README.md，帮我配置识图
-
-**方式二**：直接发 GitHub 链接（DeepSeek 等第三方模型可能无法访问 GitHub）：
-
-> 按 https://github.com/TIanle-art/agent-vision-skill 的 README 帮我配置识图
-
-AI 会问你 API Key、要哪个模型，然后自动配好。
-
-### 作为 Skill 安装（各 agent 通用）
-
-`vision/` 目录是标准 Agent Skill（Anthropic agent skills 规范）：`SKILL.md` + `scripts/vision.js`，Claude Code、opencode、Cline、Cursor 等支持 SKILL.md 的 agent 直接安装即可，装好后 AI 收到图片会自动识图，无需再拷 CLAUDE.md：
+`vision/` 目录是标准 Agent Skill（Anthropic agent skills 规范）：`SKILL.md` + `scripts/vision.js`，装好后 AI 收到图片会自动识图，无需再配置规则文件：
 
 ```
 git clone https://github.com/TIanle-art/agent-vision-skill.git
@@ -100,19 +87,19 @@ git clone https://github.com/TIanle-art/agent-vision-skill.git
 | Cline | 兼容 Claude Code 路径（`~/.claude/skills/vision/`），或按你的 Cline 版本约定放置 |
 | 其他支持 SKILL.md 的 agent | 按其 skills 目录约定放置 `vision/` 内容 |
 
-装完把 API Key 写进 skill 目录的 `.env`（复制 `.env.example`），之后直接发图片即可。**切换模型随时说一声**——"换增强视觉模型/换 plus"→ `qwen3-vl-plus`，"换回 flash"→ `qwen3-vl-flash`。
+装完把 API Key 写进 skill 根目录的 `.env`（复制 `.env.example`），之后直接发图片即可。
 
-不支持 SKILL.md 的 agent（如 Codex、Windsurf）：改用上文"场景 A / 手动配置"的粘贴模式，把规则合入其约定的规则文件（Codex 用 `AGENTS.md`，其他助手按其约定）。
+**路径二：不支持 SKILL.md 的 agent（拷贝模式）**
 
-### 手动配置
+适用于 Codex、Windsurf 等不读 SKILL.md 的 agent，或想直接塞进现有项目时：
 
-1. 把 `vision.js` 拷到项目里（需要 Node.js ≥ 18，脚本零依赖，无需 npm install）
-2. 打开 `vision.js` 顶部「模型配置」区，填 API Key（替换 `sk-xxx`），确认模型名（默认 `qwen3-vl-flash`，想增强就填 `qwen3-vl-plus`；用非千问服务还需改 API 地址）
-3. 把 `CLAUDE.md` 放到项目根目录
+1. 把 `vision.js` 和 `AGENTS.md` 拷到项目根目录（需要 Node.js ≥ 18，脚本零依赖，无需 npm install）
+2. `AGENTS.md` 主流 agent 直接认，无需改名；Claude Code 也可用 `CLAUDE.md`，Cline 改为 `.clinerules`，其他按其约定
+3. 配置 `.env`（见下节）
 
 ### 用 .env 存 Key（推荐）
 
-不想改代码？把配置写进同目录 `.env` 文件，`vision.js` 启动时自动读取：
+不想改代码？把配置写进 `vision.js` 同目录的 `.env` 文件（skill 安装形态则放 skill 根目录），启动时自动读取：
 
 1. 复制 `.env.example` 为 `.env`（或手动新建）
 2. 在 `.env` 里填：
@@ -126,21 +113,14 @@ VISION_MODEL=qwen3-vl-flash
 
 ### 如何换更强的模型
 
-跟 AI 说一句"换增强视觉模型"或"换 plus"即可（AI 会自动改配置：优先改 `.env` 里的 `VISION_MODEL`，没有 `.env` 才改 `vision.js` 顶部）。也可以手动改 `vision.js` 顶部一行：
-
-| 想要的效果 | MODEL 填 | 备注 |
-|------|------|------|
-| 默认（便宜） | `qwen3-vl-flash` | 识图够用 |
-| 质量更好 | `qwen3-vl-plus` | 同系列增强 |
-| 更强 | `qwen3.7-plus` | 官方新系列，支持识图 |
-| 最强 | `qwen3.8-max` | 旗舰模型 |
+跟 AI 说一句"换增强视觉模型"或"换 plus"即可（AI 会自动改配置：优先改 `.env` 里的 `VISION_MODEL`，没有 `.env` 才改 `vision.js` 顶部）。也可以手动改 `vision.js` 顶部一行，模型名见上表。
 
 ### 文件说明
 
 | 文件 | 用途 |
 |------|------|
-| `vision.js` | 核心脚本，OpenAI 兼容格式（与 `vision/scripts/vision.js` 同步） |
-| `CLAUDE.md` | 识图规则说明，让 AI 知道何时调用 vision.js（其他助手可转为 `.clinerules` 等格式） |
+| `vision.js` | 核心脚本，OpenAI 兼容格式（与 `vision/scripts/vision.js` 为同一代码的双形态分发，CI 强制完全一致） |
+| `AGENTS.md` | 本文件:上半是给配置助手的指令(收到仓库链接时生效),下半是识图规则(随 `vision.js` 拷入用户项目,主流 agent 直接认;正文与 `vision/SKILL.md` 一致,CI 校验) |
 | `vision/SKILL.md` + `vision/scripts/vision.js` | 标准 Agent Skill 形态，各支持 SKILL.md 的 agent 直接安装 |
 | `.env.example` | 环境变量示例，复制为 `.env` 填 Key 即可 |
 | `test/` | 单元测试，`npm test` 运行 |
