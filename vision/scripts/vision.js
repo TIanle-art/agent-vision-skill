@@ -218,8 +218,11 @@ function readImageDimensions(filePath) {
   return null;
 }
 
-// 检测可用的图片处理工具（sips → magick → convert），都没装就跳过
+// 检测可用的图片处理工具（sips → magick → convert），都没装就跳过。
+// 结果做模块级缓存（PATH 在进程生命周期内不变），包括 null（"没装"这个结果同样缓存）。
+let cachedImageProcessor = undefined; // undefined=未探测
 function getImageProcessor() {
+  if (cachedImageProcessor !== undefined) return cachedImageProcessor;
   const candidates = [
     {
       name: "sips",
@@ -243,9 +246,11 @@ function getImageProcessor() {
   for (const c of candidates) {
     try {
       execSync(c.test, { stdio: "pipe", timeout: 5000 });
+      cachedImageProcessor = c;
       return c;
     } catch {}
   }
+  cachedImageProcessor = null;
   return null;
 }
 
@@ -404,12 +409,16 @@ function checkRemoteSize(urlStr, maxBytes = MAX_IMAGE_MB * 1024 * 1024) {
   });
 }
 
-// 检测 sqlite3 命令是否可用，不可用返回 null
+// 检测 sqlite3 命令是否可用，不可用返回 null（结果做模块级缓存，同 getImageProcessor）
+let cachedSqliteCommand = undefined; // undefined=未探测
 function getSqliteCommand() {
+  if (cachedSqliteCommand !== undefined) return cachedSqliteCommand;
   try {
     execSync("which sqlite3", { stdio: "pipe", timeout: 5000 });
+    cachedSqliteCommand = "sqlite3";
     return "sqlite3";
   } catch {}
+  cachedSqliteCommand = null;
   return null;
 }
 
@@ -428,9 +437,17 @@ function locateAttachment(opts = {}) {
     console.error("Ubuntu/Debian: sudo apt install sqlite3");
     return null;
   }
-  const sessionFilter = process.env.VISION_OPENCODE_SESSION
-    ? ` AND session_id='${process.env.VISION_OPENCODE_SESSION.replace(/'/g, "''")}'`
-    : "";
+  // session id 只允许安全字符（opencode 会话 ID 为 ULID/UUID 类），白名单校验比转义更可靠；
+  // 含其他字符视为配置错误，忽略过滤条件而不是尝试转义。
+  const sessionId = process.env.VISION_OPENCODE_SESSION;
+  let sessionFilter = "";
+  if (sessionId) {
+    if (/^[A-Za-z0-9_-]+$/.test(sessionId)) {
+      sessionFilter = ` AND session_id='${sessionId}'`;
+    } else {
+      console.error("[提示] VISION_OPENCODE_SESSION 含非法字符（仅允许字母/数字/下划线/连字符），已忽略该过滤条件。");
+    }
+  }
   // 锚定 JSON 开头，避免误匹配工具输出里也含 "type":"file" 的记录
   const sql =
     "SELECT data FROM part WHERE data LIKE '{\"type\":\"file\",\"mime\":\"image/%'" +

@@ -750,6 +750,27 @@ test("locateAttachment: VISION_OPENCODE_SESSION 限定会话", () => {
   }
 });
 
+test("locateAttachment: VISION_OPENCODE_SESSION 含非法字符时忽略过滤条件", () => {
+  const dir = tempDir();
+  const b64 = PNG_1PX.toString("base64");
+  const dbPath = makeOpencodeDb(dir, [
+    `('p1','ses_a',300,'{"type":"file","mime":"image/png","filename":"clipboard","url":"data:image/png;base64,${b64}"}')`,
+    `('p2','ses_b',400,'{"type":"file","mime":"image/jpeg","filename":"clipboard","url":"data:image/jpeg;base64,${b64}"}')`,
+  ]);
+  const prev = process.env.VISION_OPENCODE_SESSION;
+  process.env.VISION_OPENCODE_SESSION = "ses_a' OR '1'='1";
+  try {
+    // 非法 session id 不应拼进 SQL，过滤条件被忽略，取全库最新附件（ses_b 的 jpeg）
+    const found = locateAttachment({ dbPath, tmpDir: dir });
+    assert.ok(found);
+    assert.match(found.file, /\.jpg$/);
+  } finally {
+    if (prev === undefined) delete process.env.VISION_OPENCODE_SESSION;
+    else process.env.VISION_OPENCODE_SESSION = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("locateAttachment: 损坏的 JSON 数据返回 null", () => {
   const dir = tempDir();
   const dbPath = makeOpencodeDb(dir, [
