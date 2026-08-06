@@ -17,7 +17,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execSync, execFile: _execFile } = require("child_process");
+const { execSync } = require("child_process");
 const https = require("https");
 const http = require("http");
 
@@ -373,7 +373,7 @@ function locateAttachment(opts = {}) {
   const tmpDir = opts.tmpDir || os.tmpdir();
   if (!fs.existsSync(dbPath)) return null;
   const sessionFilter = process.env.VISION_OPENCODE_SESSION
-    ? ` AND session_id='${process.env.VISION_OPENCODE_SESSION}'`
+    ? ` AND session_id='${process.env.VISION_OPENCODE_SESSION.replace(/'/g, "''")}'`
     : "";
   // 锚定 JSON 开头，避免误匹配工具输出里也含 "type":"file" 的记录
   const sql =
